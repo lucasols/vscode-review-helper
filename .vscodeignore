@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+node_modules/**
+out/**
+src/**
+tsconfig*.json
+tsup.config.ts
+eslint.config.mjs
+.prettierrc
+.npmrc
+pnpm-lock.yaml
+*.vsix

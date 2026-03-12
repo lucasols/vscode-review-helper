@@ -1,0 +1,164 @@
+{
+  "name": "review-helper",
+  "displayName": "Review Helper",
+  "publisher": "lucasols",
+  "version": "0.1.0",
+  "description": "Track file review progress with line-level granularity",
+  "main": "./dist/main.mjs",
+  "repository": "lucasols/vscode-review-helper",
+  "scripts": {
+    "lint": "pnpm tsc && pnpm eslint",
+    "tsc": "tsc -p tsconfig.prod.json",
+    "build": "pnpm lint && pnpm test && pnpm build:no-test",
+    "build:no-test": "tsup --minify --dts && vsce package --no-dependencies",
+    "dev": "tsup --watch --minify --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "install-extension": "code --install-extension $(ls -t review-helper-*.vsix | head -n 1)"
+  },
+  "keywords": ["review", "code-review", "review-helper"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@ls-stack/extended-lint": "^0.14.2",
+    "@types/node": "^22.9.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.13.0",
+    "@typescript-eslint/parser": "^8.13.0",
+    "@vscode/vsce": "^3.2.1",
+    "eslint": "^9.14.0",
+    "eslint-plugin-unicorn": "^56.0.0",
+    "eslint-plugin-vitest": "^0.5.4",
+    "jest-mock-vscode": "^4.0.0",
+    "prettier": "^3.3.3",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.13.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "vscode": ">=1.90.0",
+    "node": ">=18.0.0"
+  },
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "reviewHelper.addFile",
+        "title": "Add File to Review",
+        "category": "Review Helper",
+        "icon": "$(add)"
+      },
+      {
+        "command": "reviewHelper.removeFile",
+        "title": "Remove File from Review",
+        "category": "Review Helper",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "reviewHelper.markReviewed",
+        "title": "Mark Selection as Reviewed",
+        "category": "Review Helper",
+        "icon": "$(check)"
+      },
+      {
+        "command": "reviewHelper.markFileReviewed",
+        "title": "Mark Entire File as Reviewed",
+        "category": "Review Helper",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "reviewHelper.clearFileReview",
+        "title": "Clear Review State for File",
+        "category": "Review Helper",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "reviewHelper.clearAllReviews",
+        "title": "Clear All Review State",
+        "category": "Review Helper",
+        "icon": "$(trash)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewHelper",
+          "title": "Review Helper",
+          "icon": "$(checklist)"
+        }
+      ]
+    },
+    "views": {
+      "reviewHelper": [
+        {
+          "id": "reviewHelper.files",
+          "name": "Files to Review"
+        }
+      ]
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "reviewHelper.addFile",
+          "when": "resourceScheme == file",
+          "group": "reviewHelper"
+        },
+        {
+          "command": "reviewHelper.removeFile",
+          "when": "resourceScheme == file",
+          "group": "reviewHelper"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "reviewHelper.addFile",
+          "group": "reviewHelper"
+        },
+        {
+          "command": "reviewHelper.markReviewed",
+          "when": "editorHasSelection",
+          "group": "reviewHelper"
+        },
+        {
+          "command": "reviewHelper.markFileReviewed",
+          "group": "reviewHelper"
+        },
+        {
+          "command": "reviewHelper.clearFileReview",
+          "group": "reviewHelper"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "reviewHelper.clearAllReviews",
+          "when": "view == reviewHelper.files",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "reviewHelper.markFileReviewed",
+          "when": "view == reviewHelper.files",
+          "group": "inline"
+        },
+        {
+          "command": "reviewHelper.removeFile",
+          "when": "view == reviewHelper.files"
+        },
+        {
+          "command": "reviewHelper.clearFileReview",
+          "when": "view == reviewHelper.files"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "reviewHelper.markReviewed",
+        "key": "cmd+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ]
+  }
+}

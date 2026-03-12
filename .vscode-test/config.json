@@ -1,0 +1,15 @@
+{
+  "appName": "Review Helper Test",
+  "version": "1.0.0",
+  "settings": {
+    "maxRetries": 3,
+    "timeout": 5000,
+    "enableLogging": true,
+    "logLevel": "info"
+  },
+  "features": {
+    "notifications": true,
+    "autoSave": false,
+    "darkMode": true
+  }
+}
