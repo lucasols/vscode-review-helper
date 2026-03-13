@@ -189,14 +189,16 @@ export function verifyRanges(
  * Handles external edits (git operations, other editors) where lines shifted
  * without going through handleDocumentChange.
  *
- * Uses a greedy ordered match: walks through old hashes and document lines
- * in parallel, matching hashes to their new positions.
+ * Uses a patience-diff algorithm: anchors on lines unique in both sequences,
+ * then recursively matches between anchors using LCS for non-unique regions.
+ * This avoids the greedy misalignment problem with duplicate lines (blank
+ * lines, closing braces, etc.).
  */
 export function realignRanges(
   ranges: ReviewedRange[],
   documentLines: string[],
 ): ReviewedRange[] {
-  // Collect all (oldLine, hash) pairs sorted by line number
+  // Collect all hash entries sorted by line number
   const oldEntries: Array<{ hash: string }> = []
   const sorted = normalizeRanges(ranges)
   for (const range of sorted) {
@@ -210,31 +212,301 @@ export function realignRanges(
 
   if (oldEntries.length === 0) return []
 
-  // Hash all lines in the current document
   const docHashes = documentLines.map((line) => hashLine(line))
+  const oldHashes = oldEntries.map((e) => e.hash)
 
-  // Greedy ordered match: for each old hash, find the next occurrence
-  // in the document. If not found, skip that old entry.
-  let docIdx = 0
+  const matches = patienceMatch(oldHashes, 0, oldHashes.length, docHashes, 0, docHashes.length)
+
   const matchedLines: Array<{ newLine: number; hash: string }> = []
-
-  for (const entry of oldEntries) {
-    let found = false
-    for (let j = docIdx; j < docHashes.length; j++) {
-      if (docHashes[j] === entry.hash) {
-        matchedLines.push({ newLine: j + 1, hash: entry.hash }) // 1-based
-        docIdx = j + 1
-        found = true
-        break
-      }
-    }
-    if (!found) {
-      // This old line was deleted or modified - skip it
+  for (const match of matches) {
+    const hash = docHashes[match.newIdx]
+    if (hash !== undefined) {
+      matchedLines.push({ newLine: match.newIdx + 1, hash })
     }
   }
 
-  // Build ranges from matched lines
   return linesToRanges(matchedLines)
+}
+
+interface SeqMatch {
+  oldIdx: number
+  newIdx: number
+}
+
+/**
+ * Patience-diff sequence matching.
+ * 1. Trim common prefix and suffix
+ * 2. Find lines unique in both subsequences → anchors via LIS
+ * 3. Recursively match regions between anchors
+ * 4. Fall back to LCS when no unique anchors exist
+ */
+function patienceMatch(
+  oldSeq: string[],
+  oldStart: number,
+  oldEnd: number,
+  newSeq: string[],
+  newStart: number,
+  newEnd: number,
+): SeqMatch[] {
+  if (oldStart >= oldEnd || newStart >= newEnd) return []
+
+  const result: SeqMatch[] = []
+
+  // Trim common prefix
+  let oS = oldStart
+  let nS = newStart
+  while (oS < oldEnd && nS < newEnd && oldSeq[oS] === newSeq[nS]) {
+    result.push({ oldIdx: oS, newIdx: nS })
+    oS++
+    nS++
+  }
+
+  // Trim common suffix
+  let oE = oldEnd
+  let nE = newEnd
+  const suffixMatches: SeqMatch[] = []
+  while (oE > oS && nE > nS && oldSeq[oE - 1] === newSeq[nE - 1]) {
+    oE--
+    nE--
+    suffixMatches.push({ oldIdx: oE, newIdx: nE })
+  }
+
+  if (oS < oE && nS < nE) {
+    const anchors = findPatienceAnchors(oldSeq, oS, oE, newSeq, nS, nE)
+
+    if (anchors.length > 0) {
+      // Recursively match regions between anchors
+      let prevOldEnd = oS
+      let prevNewEnd = nS
+
+      for (const anchor of anchors) {
+        const subMatches = patienceMatch(
+          oldSeq,
+          prevOldEnd,
+          anchor.oldIdx,
+          newSeq,
+          prevNewEnd,
+          anchor.newIdx,
+        )
+        result.push(...subMatches)
+        result.push(anchor)
+        prevOldEnd = anchor.oldIdx + 1
+        prevNewEnd = anchor.newIdx + 1
+      }
+
+      const tailMatches = patienceMatch(oldSeq, prevOldEnd, oE, newSeq, prevNewEnd, nE)
+      result.push(...tailMatches)
+    } else {
+      // No unique anchors — fall back to LCS
+      const lcsMatches = computeLCS(oldSeq, oS, oE, newSeq, nS, nE)
+      result.push(...lcsMatches)
+    }
+  }
+
+  // Append suffix matches (collected in reverse order)
+  for (let i = suffixMatches.length - 1; i >= 0; i--) {
+    const m = suffixMatches[i]
+    if (m) result.push(m)
+  }
+
+  return result
+}
+
+/**
+ * Find patience anchors: lines unique in both subsequences,
+ * ordered via LIS (Longest Increasing Subsequence) on new positions.
+ */
+function findPatienceAnchors(
+  oldSeq: string[],
+  oldStart: number,
+  oldEnd: number,
+  newSeq: string[],
+  newStart: number,
+  newEnd: number,
+): SeqMatch[] {
+  const oldPositions = new Map<string, number[]>()
+  for (let i = oldStart; i < oldEnd; i++) {
+    const h = oldSeq[i]
+    if (h === undefined) continue
+    const positions = oldPositions.get(h)
+    if (positions) {
+      positions.push(i)
+    } else {
+      oldPositions.set(h, [i])
+    }
+  }
+
+  const newPositions = new Map<string, number[]>()
+  for (let j = newStart; j < newEnd; j++) {
+    const h = newSeq[j]
+    if (h === undefined) continue
+    const positions = newPositions.get(h)
+    if (positions) {
+      positions.push(j)
+    } else {
+      newPositions.set(h, [j])
+    }
+  }
+
+  // Lines unique in both sequences
+  const uniquePairs: SeqMatch[] = []
+  for (const [hash, oldPos] of oldPositions) {
+    if (oldPos.length !== 1) continue
+    const newPos = newPositions.get(hash)
+    if (!newPos || newPos.length !== 1) continue
+    const oldIndex = oldPos[0]
+    const newIndex = newPos[0]
+    if (oldIndex !== undefined && newIndex !== undefined) {
+      uniquePairs.push({ oldIdx: oldIndex, newIdx: newIndex })
+    }
+  }
+
+  uniquePairs.sort((a, b) => a.oldIdx - b.oldIdx)
+  if (uniquePairs.length === 0) return []
+
+  const newIndices = uniquePairs.map((p) => p.newIdx)
+  const lisIndices = longestIncreasingSubsequence(newIndices)
+
+  const anchors: SeqMatch[] = []
+  for (const i of lisIndices) {
+    const pair = uniquePairs[i]
+    if (pair !== undefined) {
+      anchors.push(pair)
+    }
+  }
+  return anchors
+}
+
+/**
+ * Standard LCS via dynamic programming.
+ * Falls back to greedy matching for very large regions to avoid excessive memory.
+ */
+function computeLCS(
+  oldSeq: string[],
+  oldStart: number,
+  oldEnd: number,
+  newSeq: string[],
+  newStart: number,
+  newEnd: number,
+): SeqMatch[] {
+  const n = oldEnd - oldStart
+  const m = newEnd - newStart
+
+  if (n === 0 || m === 0) return []
+
+  // Safety bound: fall back to greedy for very large regions
+  if (n * m > 1_000_000) {
+    return greedyMatch(oldSeq, oldStart, oldEnd, newSeq, newStart, newEnd)
+  }
+
+  const w = m + 1
+  const dp = new Array<number>((n + 1) * w).fill(0)
+
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (oldSeq[oldStart + i - 1] === newSeq[newStart + j - 1]) {
+        dp[i * w + j] = (dp[(i - 1) * w + (j - 1)] ?? 0) + 1
+      } else {
+        dp[i * w + j] = Math.max(dp[(i - 1) * w + j] ?? 0, dp[i * w + (j - 1)] ?? 0)
+      }
+    }
+  }
+
+  const result: SeqMatch[] = []
+  let i = n
+  let j = m
+  while (i > 0 && j > 0) {
+    if (oldSeq[oldStart + i - 1] === newSeq[newStart + j - 1]) {
+      result.push({ oldIdx: oldStart + i - 1, newIdx: newStart + j - 1 })
+      i--
+      j--
+    } else if ((dp[(i - 1) * w + j] ?? 0) > (dp[i * w + (j - 1)] ?? 0)) {
+      i--
+    } else {
+      j--
+    }
+  }
+
+  return result.reverse()
+}
+
+/**
+ * Greedy forward matching — fallback for very large sequences where
+ * LCS DP would use too much memory.
+ */
+function greedyMatch(
+  oldSeq: string[],
+  oldStart: number,
+  oldEnd: number,
+  newSeq: string[],
+  newStart: number,
+  newEnd: number,
+): SeqMatch[] {
+  const result: SeqMatch[] = []
+  let nIdx = newStart
+
+  for (let oIdx = oldStart; oIdx < oldEnd; oIdx++) {
+    for (let j = nIdx; j < newEnd; j++) {
+      if (newSeq[j] === oldSeq[oIdx]) {
+        result.push({ oldIdx: oIdx, newIdx: j })
+        nIdx = j + 1
+        break
+      }
+    }
+  }
+
+  return result
+}
+
+/**
+ * Longest Increasing Subsequence — O(n log n).
+ * Returns indices into the input array that form the LIS.
+ */
+function longestIncreasingSubsequence(values: number[]): number[] {
+  if (values.length === 0) return []
+
+  const n = values.length
+  const tails: number[] = []
+  const tailIndices: number[] = []
+  const parent = new Array<number>(n).fill(-1)
+
+  for (let i = 0; i < n; i++) {
+    const val = values[i]
+    if (val === undefined) continue
+
+    let lo = 0
+    let hi = tails.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      const tailVal = tails[mid]
+      if (tailVal !== undefined && tailVal < val) {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+
+    tails[lo] = val
+    tailIndices[lo] = i
+
+    if (lo > 0) {
+      const prevIdx = tailIndices[lo - 1]
+      if (prevIdx !== undefined) {
+        parent[i] = prevIdx
+      }
+    }
+  }
+
+  const result: number[] = []
+  let idx = tailIndices[tails.length - 1]
+  while (idx !== undefined && idx !== -1) {
+    result.push(idx)
+    const nextIdx = parent[idx]
+    if (nextIdx === undefined || nextIdx === -1) break
+    idx = nextIdx
+  }
+
+  return result.reverse()
 }
 
 function linesToRanges(

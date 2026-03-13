@@ -253,6 +253,79 @@ describe('realignRanges', () => {
     const result = realignRanges([], ['a', 'b'])
     expect(result).toHaveLength(0)
   })
+
+  test('handles duplicate lines without misalignment', () => {
+    // Greedy would match '}' at position 3, then fail to find 'a' after it
+    const originalLines = ['}', 'a', '}']
+    const ranges = [makeRange(1, 3, originalLines)]
+    const newDoc = ['x', 'a', '}']
+    const result = realignRanges(ranges, newDoc)
+
+    // Should match 'a' at 2 and '}' at 3 (2 matches, not just 1)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(2)
+    expect(result[0]?.endLine).toBe(3)
+  })
+
+  test('handles blank lines without consuming them prematurely', () => {
+    // Greedy would consume blank line at position 2, then miss 'a'
+    const originalLines = ['', 'a', '', 'b']
+    const ranges = [makeRange(1, 4, originalLines)]
+    const newDoc = ['a', '', 'b']
+    const result = realignRanges(ranges, newDoc)
+
+    // Should match a(1), ''(2), b(3) — 3 matches, not 2
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(3)
+  })
+
+  test('handles regions with no unique lines via LCS fallback', () => {
+    // All closing braces — no unique anchors, falls back to LCS
+    const originalLines = ['}', '}', 'a', '}']
+    const ranges = [makeRange(1, 4, originalLines)]
+    const newDoc = ['x', '}', 'a', '}']
+    const result = realignRanges(ranges, newDoc)
+
+    // LCS matches }(2), a(3), }(4) — 3 matches
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(2)
+    expect(result[0]?.endLine).toBe(4)
+  })
+
+  test('handles common prefix and suffix trimming', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    // Same prefix (a) and suffix (e), middle changed
+    const newDoc = ['a', 'X', 'c', 'Y', 'e']
+    const result = realignRanges(ranges, newDoc)
+
+    // Should match a(1), c(3), e(5)
+    const reviewedLines = new Set<number>()
+    for (const range of result) {
+      for (let l = range.startLine; l <= range.endLine; l++) {
+        reviewedLines.add(l)
+      }
+    }
+    expect(reviewedLines.has(1)).toBe(true)
+    expect(reviewedLines.has(3)).toBe(true)
+    expect(reviewedLines.has(5)).toBe(true)
+    expect(reviewedLines.has(2)).toBe(false)
+    expect(reviewedLines.has(4)).toBe(false)
+  })
+
+  test('preserves more lines than greedy when code blocks are reordered', () => {
+    // Simulates a function with braces where a line was removed above
+    const originalLines = ['{', '  return 1', '}', '', 'export default foo']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const newDoc = ['import bar', '{', '  return 1', '}', '', 'export default foo']
+    const result = realignRanges(ranges, newDoc)
+
+    // Should match all 5 original lines at their new positions
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(2)
+    expect(result[0]?.endLine).toBe(6)
+  })
 })
 
 describe('fullReverify', () => {
