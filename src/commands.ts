@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
+import { logInfo, logWarn } from './logger'
 
 function getRelativePath(
   uri: vscode.Uri,
@@ -33,11 +34,13 @@ export function registerCommands(
 
         const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri
         if (!targetUri) {
+          logWarn('addFile: no file selected')
           vscode.window.showWarningMessage('No file selected')
           return
         }
 
         const relativePath = getRelativePath(targetUri, folder)
+        logInfo(`Command: addFile → ${relativePath}`)
         const document = await vscode.workspace.openTextDocument(targetUri)
         manager.addFile(relativePath, document.lineCount)
 
@@ -60,6 +63,7 @@ export function registerCommands(
           relativePath = getRelativePath(editor.document.uri, folder)
         }
 
+        logInfo(`Command: removeFile → ${relativePath}`)
         manager.removeFile(relativePath)
         vscode.window.showInformationMessage(
           `Removed "${relativePath}" from review`,
@@ -80,6 +84,7 @@ export function registerCommands(
       const endLine = selection.end.line + 1
       const documentLines = getDocumentLines(editor.document)
 
+      logInfo(`Command: markReviewed → ${relativePath} lines ${startLine}-${endLine}`)
       manager.markSelectionReviewed(
         relativePath,
         startLine,
@@ -100,6 +105,7 @@ export function registerCommands(
       const startLine = selection.start.line + 1
       const endLine = selection.end.line + 1
 
+      logInfo(`Command: markUnreviewed → ${relativePath} lines ${startLine}-${endLine}`)
       if (!manager.getFileState(relativePath)) {
         manager.markFileReviewed(relativePath, getDocumentLines(editor.document))
       }
@@ -127,6 +133,7 @@ export function registerCommands(
           documentLines = getDocumentLines(editor.document)
         }
 
+        logInfo(`Command: markFileReviewed → ${relativePath}`)
         manager.markFileReviewed(relativePath, documentLines)
       },
     ),
@@ -144,16 +151,19 @@ export function registerCommands(
           relativePath = getRelativePath(editor.document.uri, folder)
         }
 
+        logInfo(`Command: clearFileReview → ${relativePath}`)
         manager.clearFileReview(relativePath)
       },
     ),
 
     vscode.commands.registerCommand('reviewHelper.clearAllReviews', () => {
+      logInfo('Command: clearAllReviews')
       manager.clearAll()
       vscode.window.showInformationMessage('Cleared all review state')
     }),
 
     vscode.commands.registerCommand('reviewHelper.recheckAll', async () => {
+      logInfo('Command: recheckAll')
       await manager.recheckAllFiles()
     }),
   )

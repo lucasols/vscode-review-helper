@@ -1,4 +1,5 @@
 import type { FileReviewState, ReviewedRange, ReviewState } from './types'
+import { logWarn, logError, logDebug } from './logger'
 
 /** Create a default empty review state */
 export function createDefaultState(): ReviewState {
@@ -77,22 +78,40 @@ export function deserializeState(json: string): ReviewState {
   try {
     const parsed: unknown = JSON.parse(json)
 
-    if (!isRecord(parsed)) return createDefaultState()
-    if (parsed['version'] !== 1) return createDefaultState()
+    if (!isRecord(parsed)) {
+      logWarn('Deserialization: invalid root structure')
+      return createDefaultState()
+    }
+    if (parsed['version'] !== 1) {
+      logWarn(`Deserialization: unsupported version ${String(parsed['version'])}`)
+      return createDefaultState()
+    }
 
     const filesValue = parsed['files']
-    if (!isRecord(filesValue)) return createDefaultState()
+    if (!isRecord(filesValue)) {
+      logWarn('Deserialization: invalid files structure')
+      return createDefaultState()
+    }
 
     const files: Record<string, FileReviewState> = {}
+    let skipped = 0
     for (const [key, value] of Object.entries(filesValue)) {
       const validated = validateFileState(key, value)
       if (validated) {
         files[key] = validated
+      } else {
+        skipped++
       }
     }
 
+    if (skipped > 0) {
+      logWarn(`Deserialization: stripped ${skipped} invalid file entry/entries`)
+    }
+    logDebug(`Deserialized state: ${Object.keys(files).length} valid file(s)`)
+
     return { version: 1, files }
-  } catch {
+  } catch (err) {
+    logError(`Deserialization failed: ${err instanceof Error ? err.message : String(err)}`)
     return createDefaultState()
   }
 }

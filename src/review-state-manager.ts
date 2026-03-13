@@ -13,6 +13,7 @@ import {
   deserializeState,
   serializeState,
 } from './state-persistence'
+import { logInfo, logError, logDebug, logWarn } from './logger'
 
 const REVIEW_STATE_FILE = '.vscode/review-state.json'
 const SAVE_DEBOUNCE_MS = 500
@@ -29,8 +30,11 @@ export class ReviewStateManager {
     try {
       const data = await vscode.workspace.fs.readFile(uri)
       this.state = deserializeState(new TextDecoder().decode(data))
+      const fileCount = Object.keys(this.state.files).length
+      logInfo(`State loaded: ${fileCount} tracked file(s) from ${REVIEW_STATE_FILE}`)
     } catch {
       this.state = createDefaultState()
+      logInfo('No existing state file found, starting fresh')
     }
     this._onDidChange.fire()
   }
@@ -58,6 +62,9 @@ export class ReviewStateManager {
     this.isSaving = true
     try {
       await vscode.workspace.fs.writeFile(uri, data)
+      logDebug('State saved to disk')
+    } catch (err) {
+      logError(`Failed to save state: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       // Small delay so the file watcher event can be ignored
       setTimeout(() => {
@@ -67,11 +74,15 @@ export class ReviewStateManager {
   }
 
   async reloadFromDisk(): Promise<void> {
-    if (this.isSaving) return
+    if (this.isSaving) {
+      logDebug('Skipping reload (save in progress)')
+      return
+    }
 
     const folder = this.getWorkspaceFolder()
     if (!folder) return
 
+    logInfo('Reloading state from disk (external change detected)')
     await this.load(folder)
   }
 
@@ -88,12 +99,16 @@ export class ReviewStateManager {
   }
 
   addFile(relativePath: string, totalLines: number): void {
-    if (this.state.files[relativePath]) return
+    if (this.state.files[relativePath]) {
+      logDebug(`File already tracked: ${relativePath}`)
+      return
+    }
 
     this.state.files[relativePath] = createEmptyFileState(
       relativePath,
       totalLines,
     )
+    logInfo(`File added: ${relativePath} (${totalLines} lines)`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -102,6 +117,7 @@ export class ReviewStateManager {
     if (!this.state.files[relativePath]) return
 
     delete this.state.files[relativePath]
+    logInfo(`File removed: ${relativePath}`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -115,6 +131,7 @@ export class ReviewStateManager {
       ...fileState,
       relativePath: newPath,
     }
+    logInfo(`File renamed: ${oldPath} → ${newPath}`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -137,6 +154,7 @@ export class ReviewStateManager {
       endLine,
       documentLines,
     )
+    logInfo(`Marked reviewed: ${relativePath} lines ${startLine}-${endLine}`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -154,6 +172,7 @@ export class ReviewStateManager {
       startLine,
       endLine,
     )
+    logInfo(`Marked unreviewed: ${relativePath} lines ${startLine}-${endLine}`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -183,6 +202,7 @@ export class ReviewStateManager {
         },
       ]),
     }
+    logInfo(`Marked entire file reviewed: ${relativePath} (${documentLines.length} lines)`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -195,12 +215,14 @@ export class ReviewStateManager {
       ...fileState,
       reviewedRanges: [],
     }
+    logInfo(`Cleared review: ${relativePath}`)
     this._onDidChange.fire()
     this.scheduleSave()
   }
 
   clearAll(): void {
     this.state = createDefaultState()
+    logInfo('Cleared all review state')
     this._onDidChange.fire()
     this.scheduleSave()
   }
@@ -225,10 +247,18 @@ export class ReviewStateManager {
       return { startLine, linesRemoved, linesInserted }
     })
 
+    logDebug(`Document change: ${relativePath} (${contentChanges.length} change(s), totalLines=${totalLines})`)
+
     const adjusted = adjustRangesForChanges(
       fileState.reviewedRanges,
       contentChanges,
     )
+
+    const rangesBefore = fileState.reviewedRanges.length
+    const rangesAfter = adjusted.length
+    if (rangesBefore !== rangesAfter) {
+      logDebug(`Ranges adjusted: ${rangesBefore} → ${rangesAfter}`)
+    }
 
     this.state.files[relativePath] = {
       ...fileState,
@@ -243,7 +273,9 @@ export class ReviewStateManager {
     const folder = this.getWorkspaceFolder()
     if (!folder) return
 
+    logInfo('Rechecking all tracked files')
     let changed = false
+    let checkedCount = 0
     for (const [relativePath, fileState] of Object.entries(this.state.files)) {
       if (fileState.reviewedRanges.length === 0) continue
 
@@ -258,17 +290,25 @@ export class ReviewStateManager {
           documentLines,
         )
 
+        const rangesBefore = fileState.reviewedRanges.length
+        const rangesAfter = reverified.length
+        if (rangesBefore !== rangesAfter) {
+          logDebug(`Recheck ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
+        }
+
         this.state.files[relativePath] = {
           ...fileState,
           totalLines: documentLines.length,
           reviewedRanges: reverified,
         }
         changed = true
+        checkedCount++
       } catch {
-        // File doesn't exist on disk, keep state as-is
+        logWarn(`Recheck skipped (file not found): ${relativePath}`)
       }
     }
 
+    logInfo(`Recheck complete: ${checkedCount} file(s) verified`)
     if (changed) {
       this._onDidChange.fire()
       this.scheduleSave()
@@ -280,7 +320,14 @@ export class ReviewStateManager {
     if (!fileState) return
     if (fileState.reviewedRanges.length === 0) return
 
+    logDebug(`File opened, reverifying: ${relativePath}`)
     const reverified = fullReverify(fileState.reviewedRanges, documentLines)
+
+    const rangesBefore = fileState.reviewedRanges.length
+    const rangesAfter = reverified.length
+    if (rangesBefore !== rangesAfter) {
+      logInfo(`Reverify ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
+    }
 
     this.state.files[relativePath] = {
       ...fileState,

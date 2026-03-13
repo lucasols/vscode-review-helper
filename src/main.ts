@@ -5,13 +5,19 @@ import { createDecorationTypes, updateDecorations } from './decorations'
 import { ReviewTreeProvider } from './review-tree-provider'
 import { ReviewFileDecorationProvider } from './file-decoration-provider'
 import { ReviewStatusBar } from './status-bar'
+import { initLogger, logInfo } from './logger'
 
 export function activate(context: vscode.ExtensionContext): void {
+  const channel = initLogger()
+  context.subscriptions.push(channel)
+  logInfo('Extension activating')
+
   const manager = new ReviewStateManager()
 
   // Load persisted state (non-blocking - UI updates via onDidChange when ready)
   const folder = vscode.workspace.workspaceFolders?.[0]
   if (folder) {
+    logInfo(`Loading state from workspace: ${folder.uri.fsPath}`)
     void manager.load(folder)
   }
 
@@ -180,6 +186,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(manager)
   context.subscriptions.push(treeProvider)
   context.subscriptions.push(fileDecorationProvider)
+
+  logInfo('Extension activated')
 }
 
 export function deactivate(): void {}
