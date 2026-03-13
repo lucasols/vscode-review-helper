@@ -88,6 +88,21 @@ export function registerCommands(
       )
     }),
 
+    vscode.commands.registerCommand('reviewHelper.markUnreviewed', () => {
+      const folder = getActiveWorkspaceFolder()
+      if (!folder) return
+
+      const editor = vscode.window.activeTextEditor
+      if (!editor) return
+
+      const relativePath = getRelativePath(editor.document.uri, folder)
+      const selection = editor.selection
+      const startLine = selection.start.line + 1
+      const endLine = selection.end.line + 1
+
+      manager.markSelectionUnreviewed(relativePath, startLine, endLine)
+    }),
+
     vscode.commands.registerCommand(
       'reviewHelper.markFileReviewed',
       async (item?: { relativePath?: string }) => {

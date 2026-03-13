@@ -1,11 +1,12 @@
 import type { FileReviewState, ReviewedRange } from './types'
 
-/** DJB2 hash - fast, lightweight string hash */
+/** DJB2 hash - fast, lightweight string hash. Trims trailing spaces so whitespace-only changes don't invalidate reviews. */
 export function hashLine(content: string): string {
+  const trimmed = content.trimEnd()
   let hash = 5381
-  for (let i = 0; i < content.length; i++) {
+  for (let i = 0; i < trimmed.length; i++) {
     // hash * 33 + char
-    hash = ((hash << 5) + hash + content.charCodeAt(i)) | 0
+    hash = ((hash << 5) + hash + trimmed.charCodeAt(i)) | 0
   }
   return (hash >>> 0).toString(36)
 }
@@ -119,15 +120,23 @@ export function removeReviewedLines(
 }
 
 /** Compute review progress for a single file (0 to 1) */
-export function computeFileProgress(state: FileReviewState): number {
-  if (state.totalLines === 0) return 1
+export function computeFileProgress(
+  state: FileReviewState,
+  verifiedRanges?: ReviewedRange[],
+  documentLines?: string[],
+): number {
+  const lastLine = effectiveLastLine(state.totalLines, documentLines)
+  if (lastLine === 0) return 1
 
+  const ranges = verifiedRanges ?? state.reviewedRanges
   let reviewedCount = 0
-  for (const range of state.reviewedRanges) {
-    reviewedCount += range.endLine - range.startLine + 1
+  for (const range of ranges) {
+    if (range.startLine > lastLine) break
+    const clampedEnd = Math.min(range.endLine, lastLine)
+    reviewedCount += clampedEnd - range.startLine + 1
   }
 
-  return Math.min(reviewedCount / state.totalLines, 1)
+  return Math.min(reviewedCount / lastLine, 1)
 }
 
 /** Compute total review progress across all files (0 to 1) */
@@ -151,25 +160,48 @@ export function computeTotalProgress(
   return Math.min(reviewedLines / totalLines, 1)
 }
 
+/** Find the last non-whitespace-only line (1-based). Returns 0 if all lines are whitespace. */
+function effectiveLastLine(
+  totalLines: number,
+  documentLines?: string[],
+): number {
+  if (!documentLines) return totalLines
+
+  let last = totalLines
+  while (last > 0) {
+    const content = documentLines[last - 1]
+    if (content !== undefined && content.trim().length > 0) break
+    last--
+  }
+  return last
+}
+
 /** Get all unreviewed line ranges for a file */
 export function getUnreviewedRanges(
   state: FileReviewState,
+  verifiedRanges?: ReviewedRange[],
+  documentLines?: string[],
 ): Array<{ startLine: number; endLine: number }> {
   if (state.totalLines === 0) return []
 
-  const reviewed = normalizeRanges(state.reviewedRanges)
+  const lastLine = effectiveLastLine(state.totalLines, documentLines)
+  if (lastLine === 0) return []
+
+  const reviewed = normalizeRanges(verifiedRanges ?? state.reviewedRanges)
   const unreviewed: Array<{ startLine: number; endLine: number }> = []
   let currentLine = 1
 
   for (const range of reviewed) {
+    if (range.startLine > lastLine) break
+    const clampedEnd = Math.min(range.endLine, lastLine)
     if (currentLine < range.startLine) {
       unreviewed.push({ startLine: currentLine, endLine: range.startLine - 1 })
     }
-    currentLine = range.endLine + 1
+    currentLine = clampedEnd + 1
   }
 
-  if (currentLine <= state.totalLines) {
-    unreviewed.push({ startLine: currentLine, endLine: state.totalLines })
+  if (currentLine <= lastLine) {
+    unreviewed.push({ startLine: currentLine, endLine: lastLine })
   }
 
   return unreviewed

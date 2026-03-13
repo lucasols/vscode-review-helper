@@ -8,9 +8,10 @@ export class ReviewFileDecorationProvider
   private readonly _onDidChangeFileDecorations =
     new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>()
   readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event
+  private readonly onDidChangeSubscription: vscode.Disposable
 
   constructor(private readonly manager: ReviewStateManager) {
-    manager.onDidChange(() => {
+    this.onDidChangeSubscription = manager.onDidChange(() => {
       this._onDidChangeFileDecorations.fire(undefined)
     })
   }
@@ -46,6 +47,7 @@ export class ReviewFileDecorationProvider
   }
 
   dispose(): void {
+    this.onDidChangeSubscription.dispose()
     this._onDidChangeFileDecorations.dispose()
   }
 }

@@ -12,13 +12,13 @@ interface ContentChange {
 
 /**
  * Adjust reviewed ranges for document content changes.
- * Shifts line numbers for insertions/deletions, then re-verifies hashes
- * for lines in the affected area.
+ * Only shifts line numbers for insertions/deletions - does NOT verify hashes.
+ * Hashes are preserved so that undo can restore reviewed status.
+ * Use `verifyRanges` or `fullReverify` for hash verification.
  */
 export function adjustRangesForChanges(
   ranges: ReviewedRange[],
   changes: ContentChange[],
-  documentLines: string[],
 ): ReviewedRange[] {
   let adjusted = ranges.map((r) => ({ ...r, lineHashes: { ...r.lineHashes } }))
 
@@ -28,9 +28,6 @@ export function adjustRangesForChanges(
   for (const change of sortedChanges) {
     adjusted = applyChange(adjusted, change)
   }
-
-  // Re-verify hashes against current document content
-  adjusted = reverifyHashes(adjusted, documentLines)
 
   return normalizeRanges(adjusted)
 }
@@ -176,12 +173,112 @@ function reverifyHashes(
 }
 
 /**
- * Full re-verification of all reviewed ranges against current document content.
- * Used when a file is opened to catch external changes (git operations, etc.).
+ * Verify hashes against current document content, returning only lines
+ * that still match. Used for computing decorations and progress.
+ * Does NOT mutate stored state - returns a filtered view.
+ */
+export function verifyRanges(
+  ranges: ReviewedRange[],
+  documentLines: string[],
+): ReviewedRange[] {
+  return normalizeRanges(reverifyHashes(ranges, documentLines))
+}
+
+/**
+ * Realign reviewed hashes to new line positions by matching content order.
+ * Handles external edits (git operations, other editors) where lines shifted
+ * without going through handleDocumentChange.
+ *
+ * Uses a greedy ordered match: walks through old hashes and document lines
+ * in parallel, matching hashes to their new positions.
+ */
+export function realignRanges(
+  ranges: ReviewedRange[],
+  documentLines: string[],
+): ReviewedRange[] {
+  // Collect all (oldLine, hash) pairs sorted by line number
+  const oldEntries: Array<{ hash: string }> = []
+  const sorted = normalizeRanges(ranges)
+  for (const range of sorted) {
+    for (let line = range.startLine; line <= range.endLine; line++) {
+      const hash = range.lineHashes[line]
+      if (hash !== undefined) {
+        oldEntries.push({ hash })
+      }
+    }
+  }
+
+  if (oldEntries.length === 0) return []
+
+  // Hash all lines in the current document
+  const docHashes = documentLines.map((line) => hashLine(line))
+
+  // Greedy ordered match: for each old hash, find the next occurrence
+  // in the document. If not found, skip that old entry.
+  let docIdx = 0
+  const matchedLines: Array<{ newLine: number; hash: string }> = []
+
+  for (const entry of oldEntries) {
+    let found = false
+    for (let j = docIdx; j < docHashes.length; j++) {
+      if (docHashes[j] === entry.hash) {
+        matchedLines.push({ newLine: j + 1, hash: entry.hash }) // 1-based
+        docIdx = j + 1
+        found = true
+        break
+      }
+    }
+    if (!found) {
+      // This old line was deleted or modified - skip it
+    }
+  }
+
+  // Build ranges from matched lines
+  return linesToRanges(matchedLines)
+}
+
+function linesToRanges(
+  lines: Array<{ newLine: number; hash: string }>,
+): ReviewedRange[] {
+  if (lines.length === 0) return []
+
+  const result: ReviewedRange[] = []
+  const first = lines[0]
+  if (!first) return result
+
+  let start = first.newLine
+  let end = first.newLine
+  let hashes: Record<number, string> = { [first.newLine]: first.hash }
+
+  for (let i = 1; i < lines.length; i++) {
+    const entry = lines[i]
+    if (!entry) continue
+
+    if (entry.newLine === end + 1) {
+      end = entry.newLine
+      hashes[entry.newLine] = entry.hash
+    } else {
+      result.push({ startLine: start, endLine: end, lineHashes: hashes })
+      start = entry.newLine
+      end = entry.newLine
+      hashes = { [entry.newLine]: entry.hash }
+    }
+  }
+
+  result.push({ startLine: start, endLine: end, lineHashes: hashes })
+  return result
+}
+
+/**
+ * Full re-verification that realigns hashes to new positions then prunes
+ * any that no longer match. Used when a file is opened to catch external
+ * changes (git operations, other editors, etc.).
+ * The result should be stored back to state.
  */
 export function fullReverify(
   ranges: ReviewedRange[],
   documentLines: string[],
 ): ReviewedRange[] {
-  return normalizeRanges(reverifyHashes(ranges, documentLines))
+  const realigned = realignRanges(ranges, documentLines)
+  return normalizeRanges(reverifyHashes(realigned, documentLines))
 }

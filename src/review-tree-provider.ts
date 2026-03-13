@@ -50,9 +50,10 @@ export class ReviewTreeProvider
   private readonly _onDidChangeTreeData =
     new vscode.EventEmitter<ReviewTreeItem | undefined | void>()
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event
+  private readonly onDidChangeSubscription: vscode.Disposable
 
   constructor(private readonly manager: ReviewStateManager) {
-    manager.onDidChange(() => {
+    this.onDidChangeSubscription = manager.onDidChange(() => {
       this._onDidChangeTreeData.fire()
     })
   }
@@ -74,6 +75,7 @@ export class ReviewTreeProvider
   }
 
   dispose(): void {
+    this.onDidChangeSubscription.dispose()
     this._onDidChangeTreeData.dispose()
   }
 }

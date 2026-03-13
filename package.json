@@ -62,6 +62,12 @@
         "icon": "$(check)"
       },
       {
+        "command": "reviewHelper.markUnreviewed",
+        "title": "Mark Selection as Unreviewed",
+        "category": "Review Helper",
+        "icon": "$(close)"
+      },
+      {
         "command": "reviewHelper.markFileReviewed",
         "title": "Mark Entire File as Reviewed",
         "category": "Review Helper",
@@ -103,29 +109,22 @@
           "command": "reviewHelper.addFile",
           "when": "resourceScheme == file",
           "group": "reviewHelper"
-        },
-        {
-          "command": "reviewHelper.removeFile",
-          "when": "resourceScheme == file",
-          "group": "reviewHelper"
         }
       ],
       "editor/context": [
         {
           "command": "reviewHelper.addFile",
+          "when": "!reviewHelper.activeFileTracked",
           "group": "reviewHelper"
         },
         {
           "command": "reviewHelper.markReviewed",
-          "when": "editorHasSelection",
+          "when": "reviewHelper.activeFileTracked",
           "group": "reviewHelper"
         },
         {
-          "command": "reviewHelper.markFileReviewed",
-          "group": "reviewHelper"
-        },
-        {
-          "command": "reviewHelper.clearFileReview",
+          "command": "reviewHelper.markUnreviewed",
+          "when": "reviewHelper.activeFileTracked",
           "group": "reviewHelper"
         }
       ],
@@ -152,13 +151,6 @@
         }
       ]
     },
-    "keybindings": [
-      {
-        "command": "reviewHelper.markReviewed",
-        "key": "cmd+shift+r",
-        "mac": "cmd+shift+r",
-        "when": "editorTextFocus && editorHasSelection"
-      }
-    ]
+    "keybindings": []
   }
 }

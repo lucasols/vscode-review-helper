@@ -2,6 +2,7 @@ import * as vscode from 'vscode'
 import type { FileReviewState, ReviewState } from './types'
 import {
   markLinesReviewed,
+  removeReviewedLines,
   createEmptyFileState,
   normalizeRanges,
   hashLine,
@@ -127,6 +128,23 @@ export class ReviewStateManager {
     this.scheduleSave()
   }
 
+  markSelectionUnreviewed(
+    relativePath: string,
+    startLine: number,
+    endLine: number,
+  ): void {
+    const fileState = this.state.files[relativePath]
+    if (!fileState) return
+
+    this.state.files[relativePath] = removeReviewedLines(
+      fileState,
+      startLine,
+      endLine,
+    )
+    this._onDidChange.fire()
+    this.scheduleSave()
+  }
+
   markFileReviewed(relativePath: string, documentLines: string[]): void {
     let fileState = this.state.files[relativePath]
     if (!fileState) {
@@ -180,7 +198,7 @@ export class ReviewStateManager {
       range: { start: { line: number }; end: { line: number } }
       text: string
     }>,
-    documentLines: string[],
+    totalLines: number,
   ): void {
     const fileState = this.state.files[relativePath]
     if (!fileState) return
@@ -197,12 +215,11 @@ export class ReviewStateManager {
     const adjusted = adjustRangesForChanges(
       fileState.reviewedRanges,
       contentChanges,
-      documentLines,
     )
 
     this.state.files[relativePath] = {
       ...fileState,
-      totalLines: documentLines.length,
+      totalLines,
       reviewedRanges: adjusted,
     }
     this._onDidChange.fire()

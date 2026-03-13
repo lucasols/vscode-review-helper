@@ -1,9 +1,11 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
 import { computeFileProgress, computeTotalProgress } from './review-state'
+import { verifyRanges } from './change-tracker'
 
 export class ReviewStatusBar {
   private readonly statusBarItem: vscode.StatusBarItem
+  private readonly disposables: vscode.Disposable[] = []
 
   constructor(private readonly manager: ReviewStateManager) {
     this.statusBarItem = vscode.window.createStatusBarItem(
@@ -12,13 +14,14 @@ export class ReviewStatusBar {
     )
     this.statusBarItem.command = 'reviewHelper.addFile'
 
-    manager.onDidChange(() => {
-      this.update()
-    })
-
-    vscode.window.onDidChangeActiveTextEditor(() => {
-      this.update()
-    })
+    this.disposables.push(
+      manager.onDidChange(() => {
+        this.update()
+      }),
+      vscode.window.onDidChangeActiveTextEditor(() => {
+        this.update()
+      }),
+    )
 
     this.update()
   }
@@ -42,7 +45,17 @@ export class ReviewStatusBar {
         const fileState = this.manager.getFileState(relativePath)
 
         if (fileState) {
-          const progress = Math.round(computeFileProgress(fileState) * 100)
+          const documentLines: string[] = []
+          for (let i = 0; i < editor.document.lineCount; i++) {
+            documentLines.push(editor.document.lineAt(i).text)
+          }
+          const verified = verifyRanges(
+            fileState.reviewedRanges,
+            documentLines,
+          )
+          const progress = Math.round(
+            computeFileProgress(fileState, verified, documentLines) * 100,
+          )
           const total = Math.round(
             computeTotalProgress(state.files) * 100,
           )
@@ -62,5 +75,8 @@ export class ReviewStatusBar {
 
   dispose(): void {
     this.statusBarItem.dispose()
+    for (const d of this.disposables) {
+      d.dispose()
+    }
   }
 }

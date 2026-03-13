@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "files": {
+    "example.ts": {
+      "relativePath": "example.ts",
+      "totalLines": 71,
+      "reviewedRanges": [
+        {
+          "startLine": 30,
+          "endLine": 38,
+          "lineHashes": {
+            "30": "375ig0",
+            "31": "tgoatl",
+            "32": "vdutaw",
+            "33": "1gwyf20",
+            "34": "1assjvn",
+            "35": "qqn6ir",
+            "36": "i13kfv",
+            "37": "4sl2no",
+            "38": "yixury"
+          }
+        }
+      ]
+    }
+  }
+}

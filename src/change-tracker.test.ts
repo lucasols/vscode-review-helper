@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { adjustRangesForChanges, fullReverify } from './change-tracker'
+import {
+  adjustRangesForChanges,
+  verifyRanges,
+  realignRanges,
+  fullReverify,
+} from './change-tracker'
 import { hashLine } from './review-state'
 import type { ReviewedRange } from './types'
 
@@ -34,26 +39,9 @@ describe('adjustRangesForChanges', () => {
 
   test('insertion above reviewed range shifts it down', () => {
     const ranges = [makeRange(5, 8, originalLines)]
-    // Insert 2 lines at line 2
-    const newLines = [
-      'line1',
-      'new1',
-      'new2',
-      'line2',
-      'line3',
-      'line4',
-      'line5',
-      'line6',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 2, linesRemoved: 0, linesInserted: 2 }],
-      newLines,
-    )
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 2, linesRemoved: 0, linesInserted: 2 },
+    ])
 
     expect(result).toHaveLength(1)
     expect(result[0]?.startLine).toBe(7)
@@ -62,50 +50,98 @@ describe('adjustRangesForChanges', () => {
 
   test('deletion above reviewed range shifts it up', () => {
     const ranges = [makeRange(5, 8, originalLines)]
-    // Delete lines 1-2
-    const newLines = [
-      'line3',
-      'line4',
-      'line5',
-      'line6',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 1, linesRemoved: 2, linesInserted: 0 }],
-      newLines,
-    )
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 1, linesRemoved: 2, linesInserted: 0 },
+    ])
 
     expect(result).toHaveLength(1)
     expect(result[0]?.startLine).toBe(3)
     expect(result[0]?.endLine).toBe(6)
   })
 
-  test('modification within reviewed range invalidates changed lines', () => {
+  test('modification keeps hashes for reverification later', () => {
     const ranges = [makeRange(1, 5, originalLines)]
-    // Modify line 3
-    const newLines = [
-      'line1',
-      'line2',
-      'MODIFIED',
-      'line4',
-      'line5',
-      'line6',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 3, linesRemoved: 1, linesInserted: 1 }],
-      newLines,
-    )
+    // Replace line 3 with 1 new line - hashes are preserved (not verified here)
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 3, linesRemoved: 1, linesInserted: 1 },
+    ])
 
-    // Lines 1-2 and 4-5 should still be reviewed, line 3 should not
+    // Range should still be [1-5] with all hashes preserved
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(5)
+    // Line 3's hash is kept for later verification
+    expect(result[0]?.lineHashes[3]).toBe(hashLine('line3'))
+  })
+
+  test('undo preserves hashes (same line count, same positions)', () => {
+    const ranges = [makeRange(1, 5, originalLines)]
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 3, linesRemoved: 1, linesInserted: 1 },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(5)
+  })
+
+  test('insertion within reviewed range expands it', () => {
+    const ranges = [makeRange(1, 5, originalLines)]
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 4, linesRemoved: 0, linesInserted: 2 },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(7)
+    // Original lines 4-5 shifted to 6-7
+    expect(result[0]?.lineHashes[6]).toBe(hashLine('line4'))
+    expect(result[0]?.lineHashes[7]).toBe(hashLine('line5'))
+    // New lines 4-5 have no hashes
+    expect(result[0]?.lineHashes[4]).toBeUndefined()
+    expect(result[0]?.lineHashes[5]).toBeUndefined()
+  })
+
+  test('deletion within reviewed range shrinks it', () => {
+    const ranges = [makeRange(1, 10, originalLines)]
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 4, linesRemoved: 3, linesInserted: 0 },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(7)
+  })
+
+  test('change below reviewed range does not affect it', () => {
+    const ranges = [makeRange(1, 3, originalLines)]
+    const result = adjustRangesForChanges(ranges, [
+      { startLine: 5, linesRemoved: 1, linesInserted: 1 },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(3)
+  })
+})
+
+describe('verifyRanges', () => {
+  test('keeps lines with matching hashes', () => {
+    const lines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, lines)]
+    const result = verifyRanges(ranges, lines)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(5)
+  })
+
+  test('removes lines with non-matching hashes', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const modifiedLines = ['a', 'b', 'CHANGED', 'd', 'e']
+    const result = verifyRanges(ranges, modifiedLines)
+
     const reviewedLines = new Set<number>()
     for (const range of result) {
       for (let l = range.startLine; l <= range.endLine; l++) {
@@ -119,106 +155,103 @@ describe('adjustRangesForChanges', () => {
     expect(reviewedLines.has(5)).toBe(true)
   })
 
-  test('undo restores reviewed status (content matches hash)', () => {
+  test('edit then undo: hashes survive and match again', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
     const ranges = [makeRange(1, 5, originalLines)]
-    // "Undo" - content is same as original
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 3, linesRemoved: 1, linesInserted: 1 }],
-      originalLines,
-    )
 
-    expect(result).toHaveLength(1)
-    expect(result[0]?.startLine).toBe(1)
-    expect(result[0]?.endLine).toBe(5)
-  })
+    // Step 1: edit line 3 (shift only, no verify)
+    const afterEdit = adjustRangesForChanges(ranges, [
+      { startLine: 3, linesRemoved: 1, linesInserted: 1 },
+    ])
 
-  test('insertion within reviewed range splits it', () => {
-    const ranges = [makeRange(1, 5, originalLines)]
-    // Insert 2 lines after line 3 (replace 0 lines at line 4)
-    const newLines = [
-      'line1',
-      'line2',
-      'line3',
-      'new1',
-      'new2',
-      'line4',
-      'line5',
-      'line6',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 4, linesRemoved: 0, linesInserted: 2 }],
-      newLines,
-    )
-
-    // Lines 1-3 should still be reviewed, 4-5 shifted to 6-7
-    const reviewedLines = new Set<number>()
-    for (const range of result) {
+    // Verify against modified content - line 3 should be unreviewed
+    const modifiedLines = ['a', 'b', 'CHANGED', 'd', 'e']
+    const verifiedAfterEdit = verifyRanges(afterEdit, modifiedLines)
+    const editReviewed = new Set<number>()
+    for (const range of verifiedAfterEdit) {
       for (let l = range.startLine; l <= range.endLine; l++) {
-        reviewedLines.add(l)
+        editReviewed.add(l)
       }
     }
-    expect(reviewedLines.has(1)).toBe(true)
-    expect(reviewedLines.has(2)).toBe(true)
-    expect(reviewedLines.has(3)).toBe(true)
-    expect(reviewedLines.has(4)).toBe(false) // new line
-    expect(reviewedLines.has(5)).toBe(false) // new line
-    expect(reviewedLines.has(6)).toBe(true) // was line 4
-    expect(reviewedLines.has(7)).toBe(true) // was line 5
+    expect(editReviewed.has(3)).toBe(false)
+
+    // Step 2: undo (shift only, hashes still preserved in afterEdit)
+    const afterUndo = adjustRangesForChanges(afterEdit, [
+      { startLine: 3, linesRemoved: 1, linesInserted: 1 },
+    ])
+
+    // Verify against original content - line 3 should be reviewed again
+    const verifiedAfterUndo = verifyRanges(afterUndo, originalLines)
+    expect(verifiedAfterUndo).toHaveLength(1)
+    expect(verifiedAfterUndo[0]?.startLine).toBe(1)
+    expect(verifiedAfterUndo[0]?.endLine).toBe(5)
   })
+})
 
-  test('deletion within reviewed range removes those lines', () => {
-    const ranges = [makeRange(1, 10, originalLines)]
-    // Delete lines 4-6
-    const newLines = [
-      'line1',
-      'line2',
-      'line3',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 4, linesRemoved: 3, linesInserted: 0 }],
-      newLines,
-    )
+describe('realignRanges', () => {
+  test('handles lines inserted above reviewed range', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    // Two new lines inserted at the top
+    const newDoc = ['X', 'Y', 'a', 'b', 'c', 'd', 'e']
+    const result = realignRanges(ranges, newDoc)
 
-    // All remaining lines should be reviewed
     expect(result).toHaveLength(1)
-    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.startLine).toBe(3)
     expect(result[0]?.endLine).toBe(7)
   })
 
-  test('change below reviewed range does not affect it', () => {
-    const ranges = [makeRange(1, 3, originalLines)]
-    const newLines = [
-      'line1',
-      'line2',
-      'line3',
-      'line4',
-      'MODIFIED',
-      'line6',
-      'line7',
-      'line8',
-      'line9',
-      'line10',
-    ]
-    const result = adjustRangesForChanges(
-      ranges,
-      [{ startLine: 5, linesRemoved: 1, linesInserted: 1 }],
-      newLines,
-    )
+  test('handles lines inserted in the middle of reviewed range', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    // Two new lines inserted between b and c
+    const newDoc = ['a', 'b', 'X', 'Y', 'c', 'd', 'e']
+    const result = realignRanges(ranges, newDoc)
+
+    // a(1), b(2) then c(5), d(6), e(7) - split into two ranges
+    expect(result).toHaveLength(2)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(2)
+    expect(result[1]?.startLine).toBe(5)
+    expect(result[1]?.endLine).toBe(7)
+  })
+
+  test('handles lines deleted from reviewed range', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    // c was deleted - remaining a,b,d,e are contiguous at 1-4
+    const newDoc = ['a', 'b', 'd', 'e']
+    const result = realignRanges(ranges, newDoc)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(4)
+  })
+
+  test('handles lines deleted above reviewed range', () => {
+    const originalLines = ['X', 'Y', 'a', 'b', 'c']
+    const ranges = [makeRange(3, 5, originalLines)]
+    // X and Y deleted
+    const newDoc = ['a', 'b', 'c']
+    const result = realignRanges(ranges, newDoc)
 
     expect(result).toHaveLength(1)
     expect(result[0]?.startLine).toBe(1)
     expect(result[0]?.endLine).toBe(3)
+  })
+
+  test('handles completely different document', () => {
+    const originalLines = ['a', 'b', 'c']
+    const ranges = [makeRange(1, 3, originalLines)]
+    const newDoc = ['X', 'Y', 'Z']
+    const result = realignRanges(ranges, newDoc)
+
+    expect(result).toHaveLength(0)
+  })
+
+  test('handles empty ranges', () => {
+    const result = realignRanges([], ['a', 'b'])
+    expect(result).toHaveLength(0)
   })
 })
 
@@ -239,7 +272,6 @@ describe('fullReverify', () => {
     const modifiedLines = ['a', 'b', 'CHANGED', 'd', 'e']
     const result = fullReverify(ranges, modifiedLines)
 
-    // Lines 1-2 and 4-5 should remain, line 3 removed
     const reviewedLines = new Set<number>()
     for (const range of result) {
       for (let l = range.startLine; l <= range.endLine; l++) {
@@ -267,5 +299,29 @@ describe('fullReverify', () => {
     expect(result).toHaveLength(1)
     expect(result[0]?.startLine).toBe(1)
     expect(result[0]?.endLine).toBe(2)
+  })
+
+  test('preserves reviewed lines when lines are inserted externally', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    // External edit: two lines inserted at the top
+    const newDoc = ['NEW1', 'NEW2', 'a', 'b', 'c', 'd', 'e']
+    const result = fullReverify(ranges, newDoc)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(3)
+    expect(result[0]?.endLine).toBe(7)
+  })
+
+  test('preserves reviewed lines when lines are deleted externally', () => {
+    const originalLines = ['X', 'a', 'b', 'c']
+    const ranges = [makeRange(2, 4, originalLines)]
+    // External edit: first line deleted
+    const newDoc = ['a', 'b', 'c']
+    const result = fullReverify(ranges, newDoc)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(1)
+    expect(result[0]?.endLine).toBe(3)
   })
 })

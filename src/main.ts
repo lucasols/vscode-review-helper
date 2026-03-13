@@ -70,14 +70,42 @@ export async function activate(
     }
   }
 
+  // Update the when-clause context for the active file
+  function updateActiveFileContext(): void {
+    const editor = vscode.window.activeTextEditor
+    if (!editor) {
+      vscode.commands.executeCommand(
+        'setContext',
+        'reviewHelper.activeFileTracked',
+        false,
+      )
+      return
+    }
+    const wsFolder = vscode.workspace.workspaceFolders?.[0]
+    if (!wsFolder) return
+    const relativePath = vscode.workspace
+      .asRelativePath(editor.document.uri, false)
+      .replace(/\\/g, '/')
+    const isTracked = !!manager.getFileState(relativePath)
+    vscode.commands.executeCommand(
+      'setContext',
+      'reviewHelper.activeFileTracked',
+      isTracked,
+    )
+  }
+
   // Listen for state changes
-  manager.onDidChange(() => {
-    updateAllEditors()
-  })
+  context.subscriptions.push(
+    manager.onDidChange(() => {
+      updateAllEditors()
+      updateActiveFileContext()
+    }),
+  )
 
   // Listen for active editor changes
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      updateActiveFileContext()
       if (!editor) return
 
       // Re-verify on file open
@@ -108,17 +136,18 @@ export async function activate(
         .replace(/\\/g, '/')
 
       if (event.contentChanges.length > 0) {
-        const lines: string[] = []
-        for (let i = 0; i < event.document.lineCount; i++) {
-          lines.push(event.document.lineAt(i).text)
-        }
-        manager.handleDocumentChange(relativePath, event.contentChanges, lines)
+        manager.handleDocumentChange(
+          relativePath,
+          event.contentChanges,
+          event.document.lineCount,
+        )
       }
     }),
   )
 
-  // Initial decoration update
+  // Initial updates
   updateAllEditors()
+  updateActiveFileContext()
 
   // Disposables
   context.subscriptions.push(manager)
