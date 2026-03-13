@@ -228,6 +228,52 @@ export function realignRanges(
   return linesToRanges(matchedLines)
 }
 
+function realignRangesWithDocumentSnapshot(
+  ranges: ReviewedRange[],
+  previousDocumentLineHashes: string[],
+  documentLines: string[],
+): ReviewedRange[] {
+  if (ranges.length === 0 || previousDocumentLineHashes.length === 0) {
+    return []
+  }
+
+  const matches = patienceMatch(
+    previousDocumentLineHashes,
+    0,
+    previousDocumentLineHashes.length,
+    documentLines.map((line) => hashLine(line)),
+    0,
+    documentLines.length,
+  )
+
+  const oldToNewLine = new Map<number, number>()
+  for (const match of matches) {
+    oldToNewLine.set(match.oldIdx + 1, match.newIdx + 1)
+  }
+
+  const matchedLines: Array<{ newLine: number; hash: string }> = []
+  const sorted = normalizeRanges(ranges)
+  for (const range of sorted) {
+    for (let oldLine = range.startLine; oldLine <= range.endLine; oldLine++) {
+      const storedHash = range.lineHashes[oldLine]
+      if (storedHash === undefined) continue
+
+      const newLine = oldToNewLine.get(oldLine)
+      if (newLine === undefined) continue
+
+      const content = documentLines[newLine - 1]
+      if (content === undefined) continue
+
+      const currentHash = hashLine(content)
+      if (currentHash === storedHash) {
+        matchedLines.push({ newLine, hash: storedHash })
+      }
+    }
+  }
+
+  return linesToRanges(matchedLines)
+}
+
 interface SeqMatch {
   oldIdx: number
   newIdx: number
@@ -550,7 +596,17 @@ function linesToRanges(
 export function fullReverify(
   ranges: ReviewedRange[],
   documentLines: string[],
+  previousDocumentLineHashes?: string[],
 ): ReviewedRange[] {
+  if (previousDocumentLineHashes && previousDocumentLineHashes.length > 0) {
+    const realigned = realignRangesWithDocumentSnapshot(
+      ranges,
+      previousDocumentLineHashes,
+      documentLines,
+    )
+    return normalizeRanges(reverifyHashes(realigned, documentLines))
+  }
+
   const realigned = realignRanges(ranges, documentLines)
   return normalizeRanges(reverifyHashes(realigned, documentLines))
 }

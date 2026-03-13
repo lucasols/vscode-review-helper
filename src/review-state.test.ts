@@ -97,6 +97,7 @@ describe('markLinesReviewed', () => {
     expect(result.reviewedRanges[0]?.lineHashes[1]).toBe(hashLine('line1'))
     expect(result.reviewedRanges[0]?.lineHashes[2]).toBe(hashLine('line2'))
     expect(result.reviewedRanges[0]?.lineHashes[3]).toBe(hashLine('line3'))
+    expect(result.documentLineHashes).toEqual(lines.map((line) => hashLine(line)))
   })
 
   test('merges with existing ranges', () => {

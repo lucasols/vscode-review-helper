@@ -8,6 +8,7 @@ export interface FileReviewState {
   relativePath: string // workspace-relative, forward slashes
   reviewedRanges: ReviewedRange[]
   totalLines: number
+  documentLineHashes?: string[] // full document snapshot from the last known file state
 }
 
 export interface ReviewState {

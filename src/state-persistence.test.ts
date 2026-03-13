@@ -26,6 +26,7 @@ describe('serializeState / deserializeState', () => {
     state.files['src/main.ts'] = {
       relativePath: 'src/main.ts',
       totalLines: 50,
+      documentLineHashes: ['h1', 'h2'],
       reviewedRanges: [
         {
           startLine: 1,
@@ -148,6 +149,27 @@ describe('serializeState / deserializeState', () => {
     const result = deserializeState(json)
     const hashes = result.files['a.ts']?.reviewedRanges[0]?.lineHashes
     expect(hashes).toEqual({ 1: 'valid', 3: 'ok' })
+  })
+
+  test('strips invalid documentLineHashes but keeps the file', () => {
+    const json = JSON.stringify({
+      version: 1,
+      files: {
+        'a.ts': {
+          relativePath: 'a.ts',
+          totalLines: 10,
+          documentLineHashes: ['valid', 123],
+          reviewedRanges: [],
+        },
+      },
+    })
+    const result = deserializeState(json)
+    expect(result.files['a.ts']).toEqual({
+      relativePath: 'a.ts',
+      totalLines: 10,
+      reviewedRanges: [],
+      documentLineHashes: undefined,
+    })
   })
 
   test('returns default for files as array', () => {

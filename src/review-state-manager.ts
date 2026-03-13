@@ -6,6 +6,7 @@ import {
   createEmptyFileState,
   normalizeRanges,
   hashLine,
+  hashDocumentLines,
 } from './review-state'
 import { adjustRangesForChanges, verifyRanges, fullReverify } from './change-tracker'
 import {
@@ -212,6 +213,7 @@ export class ReviewStateManager {
           lineHashes,
         },
       ]),
+      documentLineHashes: hashDocumentLines(documentLines),
     }
     logInfo(`Marked entire file reviewed: ${relativePath} (${documentLines.length} lines)`)
     this._onDidChange.fire()
@@ -273,6 +275,7 @@ export class ReviewStateManager {
       ...fileState,
       totalLines,
       reviewedRanges: adjusted,
+      documentLineHashes: hashDocumentLines(documentLines),
     }
     this._onDidChange.fire()
 
@@ -325,6 +328,7 @@ export class ReviewStateManager {
     this.state.files[relativePath] = {
       ...fileState,
       reviewedRanges: verified,
+      documentLineHashes: hashDocumentLines(documentLines),
     }
     this._onDidChange.fire()
     this.scheduleSave()
@@ -350,6 +354,7 @@ export class ReviewStateManager {
         const reverified = fullReverify(
           fileState.reviewedRanges,
           documentLines,
+          fileState.documentLineHashes,
         )
 
         const rangesBefore = fileState.reviewedRanges.length
@@ -362,6 +367,7 @@ export class ReviewStateManager {
           ...fileState,
           totalLines: documentLines.length,
           reviewedRanges: reverified,
+          documentLineHashes: hashDocumentLines(documentLines),
         }
         changed = true
         checkedCount++
@@ -384,7 +390,11 @@ export class ReviewStateManager {
 
     this.cancelPendingVerification(relativePath)
     logDebug(`File opened, reverifying: ${relativePath}`)
-    const reverified = fullReverify(fileState.reviewedRanges, documentLines)
+    const reverified = fullReverify(
+      fileState.reviewedRanges,
+      documentLines,
+      fileState.documentLineHashes,
+    )
 
     const rangesBefore = fileState.reviewedRanges.length
     const rangesAfter = reverified.length
@@ -396,6 +406,7 @@ export class ReviewStateManager {
       ...fileState,
       totalLines: documentLines.length,
       reviewedRanges: reverified,
+      documentLineHashes: hashDocumentLines(documentLines),
     }
     this._onDidChange.fire()
     this.scheduleSave()

@@ -397,4 +397,19 @@ describe('fullReverify', () => {
     expect(result[0]?.startLine).toBe(1)
     expect(result[0]?.endLine).toBe(3)
   })
+
+  test('prefers the closest shifted duplicate block over an earlier duplicate', () => {
+    const originalLines = ['x1', 'x2', 'x3', 'x4', 'a', 'b', 'c']
+    const ranges = [makeRange(5, 7, originalLines)]
+    const newDoc = ['a', 'b', 'c', 'x1', 'x2', 'x3', 'x4', 'a', 'b', 'c']
+    const result = fullReverify(
+      ranges,
+      newDoc,
+      originalLines.map((line) => hashLine(line)),
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.startLine).toBe(8)
+    expect(result[0]?.endLine).toBe(10)
+  })
 })

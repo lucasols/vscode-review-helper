@@ -49,13 +49,25 @@ function validateRange(value: unknown): ReviewedRange | null {
   return { startLine, endLine, lineHashes: validatedHashes }
 }
 
+function validateDocumentLineHashes(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return undefined
+
+  const hashes: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') return undefined
+    hashes.push(entry)
+  }
+  return hashes
+}
+
 function validateFileState(
   key: string,
   value: unknown,
 ): FileReviewState | null {
   if (!isRecord(value)) return null
 
-  const { relativePath, reviewedRanges, totalLines } = value
+  const { relativePath, reviewedRanges, totalLines, documentLineHashes } = value
   if (typeof relativePath !== 'string' || relativePath !== key) return null
   if (typeof totalLines !== 'number' || !Number.isFinite(totalLines) || totalLines < 0) {
     return null
@@ -70,7 +82,13 @@ function validateFileState(
     }
   }
 
-  return { relativePath, totalLines, reviewedRanges: validRanges }
+  const validatedDocumentHashes = validateDocumentLineHashes(documentLineHashes)
+  return {
+    relativePath,
+    totalLines,
+    reviewedRanges: validRanges,
+    documentLineHashes: validatedDocumentHashes,
+  }
 }
 
 /** Deserialize JSON string to review state. Invalid entries are stripped. */

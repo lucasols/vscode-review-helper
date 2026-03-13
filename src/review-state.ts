@@ -11,6 +11,10 @@ export function hashLine(content: string): string {
   return (hash >>> 0).toString(36)
 }
 
+export function hashDocumentLines(documentLines: string[]): string[] {
+  return documentLines.map((line) => hashLine(line))
+}
+
 /** Sort and merge overlapping/adjacent ranges */
 export function normalizeRanges(ranges: ReviewedRange[]): ReviewedRange[] {
   if (ranges.length <= 1) return ranges
@@ -68,6 +72,7 @@ export function markLinesReviewed(
     ...state,
     reviewedRanges: merged,
     totalLines: documentLines.length,
+    documentLineHashes: hashDocumentLines(documentLines),
   }
 }
 
