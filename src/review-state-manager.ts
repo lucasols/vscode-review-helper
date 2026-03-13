@@ -106,6 +106,19 @@ export class ReviewStateManager {
     this.scheduleSave()
   }
 
+  renameFile(oldPath: string, newPath: string): void {
+    const fileState = this.state.files[oldPath]
+    if (!fileState) return
+
+    delete this.state.files[oldPath]
+    this.state.files[newPath] = {
+      ...fileState,
+      relativePath: newPath,
+    }
+    this._onDidChange.fire()
+    this.scheduleSave()
+  }
+
   markSelectionReviewed(
     relativePath: string,
     startLine: number,

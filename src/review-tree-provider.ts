@@ -5,10 +5,16 @@ import { computeFileProgress } from './review-state'
 export class ReviewTreeItem extends vscode.TreeItem {
   readonly relativePath: string
 
-  constructor(relativePath: string, progress: number) {
+  constructor(
+    relativePath: string,
+    progress: number,
+    fileExists: boolean,
+  ) {
     const percentage = Math.round(progress * 100)
     const fileName = relativePath.split('/').pop() ?? relativePath
-    const label = `${fileName} (${String(percentage)}%)`
+    const label = fileExists
+      ? `${fileName} (${String(percentage)}%)`
+      : `${fileName} (missing)`
 
     super(label, vscode.TreeItemCollapsibleState.None)
 
@@ -16,28 +22,36 @@ export class ReviewTreeItem extends vscode.TreeItem {
     this.description = relativePath.includes('/')
       ? relativePath.slice(0, relativePath.lastIndexOf('/'))
       : ''
-    this.tooltip = `${relativePath} - ${String(percentage)}% reviewed`
-    this.iconPath =
-      progress >= 1
-        ? new vscode.ThemeIcon(
-            'pass-filled',
-            new vscode.ThemeColor('testing.iconPassed'),
-          )
-        : new vscode.ThemeIcon(
-            'circle-large-outline',
-            new vscode.ThemeColor('testing.iconQueued'),
-          )
 
-    this.command = {
-      command: 'vscode.open',
-      title: 'Open File',
-      arguments: [
-        vscode.Uri.joinPath(
-          vscode.workspace.workspaceFolders?.[0]?.uri ??
-            vscode.Uri.file('/'),
-          relativePath,
-        ),
-      ],
+    if (fileExists) {
+      this.tooltip = `${relativePath} - ${String(percentage)}% reviewed`
+      this.iconPath =
+        progress >= 1
+          ? new vscode.ThemeIcon(
+              'pass-filled',
+              new vscode.ThemeColor('testing.iconPassed'),
+            )
+          : new vscode.ThemeIcon(
+              'circle-large-outline',
+              new vscode.ThemeColor('testing.iconQueued'),
+            )
+      this.command = {
+        command: 'vscode.open',
+        title: 'Open File',
+        arguments: [
+          vscode.Uri.joinPath(
+            vscode.workspace.workspaceFolders?.[0]?.uri ??
+              vscode.Uri.file('/'),
+            relativePath,
+          ),
+        ],
+      }
+    } else {
+      this.tooltip = `${relativePath} - file not found on disk`
+      this.iconPath = new vscode.ThemeIcon(
+        'warning',
+        new vscode.ThemeColor('list.warningForeground'),
+      )
     }
 
     this.contextValue = 'reviewFile'
@@ -62,13 +76,23 @@ export class ReviewTreeProvider
     return element
   }
 
-  getChildren(): ReviewTreeItem[] {
+  async getChildren(): Promise<ReviewTreeItem[]> {
     const state = this.manager.getState()
+    const folder = vscode.workspace.workspaceFolders?.[0]
     const items: ReviewTreeItem[] = []
 
     for (const [relativePath, fileState] of Object.entries(state.files)) {
       const progress = computeFileProgress(fileState)
-      items.push(new ReviewTreeItem(relativePath, progress))
+      let fileExists = true
+      if (folder) {
+        const uri = vscode.Uri.joinPath(folder.uri, relativePath)
+        try {
+          await vscode.workspace.fs.stat(uri)
+        } catch {
+          fileExists = false
+        }
+      }
+      items.push(new ReviewTreeItem(relativePath, progress, fileExists))
     }
 
     return items.sort((a, b) => a.relativePath.localeCompare(b.relativePath))

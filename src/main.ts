@@ -128,6 +128,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   )
 
+  // Track file renames/moves
+  context.subscriptions.push(
+    vscode.workspace.onDidRenameFiles((event) => {
+      const wsFolder = vscode.workspace.workspaceFolders?.[0]
+      if (!wsFolder) return
+
+      for (const { oldUri, newUri } of event.files) {
+        const oldPath = vscode.workspace
+          .asRelativePath(oldUri, false)
+          .replace(/\\/g, '/')
+        const newPath = vscode.workspace
+          .asRelativePath(newUri, false)
+          .replace(/\\/g, '/')
+        manager.renameFile(oldPath, newPath)
+      }
+    }),
+  )
+
   // Initial updates
   updateAllEditors()
   updateActiveFileContext()
