@@ -142,10 +142,15 @@ export function activate(context: vscode.ExtensionContext): void {
         .replace(/\\/g, '/')
 
       if (event.contentChanges.length > 0) {
+        const documentLines: string[] = []
+        for (let i = 0; i < event.document.lineCount; i++) {
+          documentLines.push(event.document.lineAt(i).text)
+        }
         manager.handleDocumentChange(
           relativePath,
           event.contentChanges,
           event.document.lineCount,
+          documentLines,
         )
       }
     }),

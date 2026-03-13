@@ -13,8 +13,8 @@ interface ContentChange {
 /**
  * Adjust reviewed ranges for document content changes.
  * Only shifts line numbers for insertions/deletions - does NOT verify hashes.
- * Hashes are preserved so that undo can restore reviewed status.
- * Use `verifyRanges` or `fullReverify` for hash verification.
+ * Hashes are preserved so that the next step (verifyChangedZones) can check
+ * whether the content actually changed.
  */
 export function adjustRangesForChanges(
   ranges: ReviewedRange[],

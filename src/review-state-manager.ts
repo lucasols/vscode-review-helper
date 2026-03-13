@@ -7,7 +7,7 @@ import {
   normalizeRanges,
   hashLine,
 } from './review-state'
-import { adjustRangesForChanges, fullReverify } from './change-tracker'
+import { adjustRangesForChanges, verifyRanges, fullReverify } from './change-tracker'
 import {
   createDefaultState,
   deserializeState,
@@ -17,11 +17,19 @@ import { logInfo, logError, logDebug, logWarn } from './logger'
 
 const REVIEW_STATE_FILE = '.vscode/review-state.json'
 const SAVE_DEBOUNCE_MS = 500
+const VERIFY_DEBOUNCE_MS = 300
+
+interface PendingVerification {
+  relativePath: string
+  documentLines: string[]
+  timeout: ReturnType<typeof setTimeout>
+}
 
 export class ReviewStateManager {
   private state: ReviewState = createDefaultState()
   private saveTimeout: ReturnType<typeof setTimeout> | undefined
   private isSaving = false
+  private readonly pendingVerifications = new Map<string, PendingVerification>()
   private readonly _onDidChange = new vscode.EventEmitter<void>()
   readonly onDidChange = this._onDidChange.event
 
@@ -234,6 +242,7 @@ export class ReviewStateManager {
       text: string
     }>,
     totalLines: number,
+    documentLines: string[],
   ): void {
     const fileState = this.state.files[relativePath]
     if (!fileState) return
@@ -254,16 +263,48 @@ export class ReviewStateManager {
       contentChanges,
     )
 
-    const rangesBefore = fileState.reviewedRanges.length
-    const rangesAfter = adjusted.length
-    if (rangesBefore !== rangesAfter) {
-      logDebug(`Ranges adjusted: ${rangesBefore} → ${rangesAfter}`)
-    }
-
+    // Update state immediately with shifted ranges (decorations verify independently)
     this.state.files[relativePath] = {
       ...fileState,
       totalLines,
       reviewedRanges: adjusted,
+    }
+    this._onDidChange.fire()
+
+    // Debounce the hash verification and save
+    this.scheduleVerification(relativePath, documentLines)
+  }
+
+  private scheduleVerification(relativePath: string, documentLines: string[]): void {
+    const existing = this.pendingVerifications.get(relativePath)
+    if (existing) {
+      clearTimeout(existing.timeout)
+    }
+
+    const timeout = setTimeout(() => {
+      this.pendingVerifications.delete(relativePath)
+      this.runVerification(relativePath, documentLines)
+    }, VERIFY_DEBOUNCE_MS)
+
+    this.pendingVerifications.set(relativePath, { relativePath, documentLines, timeout })
+  }
+
+  private runVerification(relativePath: string, documentLines: string[]): void {
+    const fileState = this.state.files[relativePath]
+    if (!fileState) return
+    if (fileState.reviewedRanges.length === 0) return
+
+    const verified = verifyRanges(fileState.reviewedRanges, documentLines)
+
+    const rangesBefore = fileState.reviewedRanges.length
+    const rangesAfter = verified.length
+    if (rangesBefore !== rangesAfter) {
+      logDebug(`Verification ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
+    }
+
+    this.state.files[relativePath] = {
+      ...fileState,
+      reviewedRanges: verified,
     }
     this._onDidChange.fire()
     this.scheduleSave()
@@ -339,6 +380,11 @@ export class ReviewStateManager {
   }
 
   dispose(): void {
+    for (const pending of this.pendingVerifications.values()) {
+      clearTimeout(pending.timeout)
+      this.runVerification(pending.relativePath, pending.documentLines)
+    }
+    this.pendingVerifications.clear()
     if (this.saveTimeout !== undefined) {
       clearTimeout(this.saveTimeout)
       this.saveNow()
