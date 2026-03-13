@@ -12,7 +12,7 @@ export class ReviewStatusBar {
       vscode.StatusBarAlignment.Left,
       100,
     )
-    this.statusBarItem.command = 'reviewHelper.addFile'
+    this.statusBarItem.command = 'reviewHelper.files.focus'
 
     this.disposables.push(
       manager.onDidChange(() => {

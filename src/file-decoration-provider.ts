@@ -40,7 +40,7 @@ export class ReviewFileDecorationProvider
     }
 
     return new vscode.FileDecoration(
-      `${String(percentage)}%`,
+      '\u25CB',
       `Review progress: ${String(percentage)}%`,
       new vscode.ThemeColor('testing.iconQueued'),
     )
