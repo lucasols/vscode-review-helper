@@ -11,29 +11,65 @@ function getRelativePath(editor: vscode.TextEditor): string | undefined {
     .replace(/\\/g, '/')
 }
 
-export function createDecorationTypes(
+interface DecorationColors {
+  gutterDot: string
+  background: string
+  overviewRuler: string
+}
+
+function getDecorationColors(): DecorationColors {
+  const config = vscode.workspace.getConfiguration('reviewHelper')
+  return {
+    gutterDot: config.get<string>('colors.gutterDot', 'rgba(72, 199, 90, 0.85)'),
+    background: config.get<string>('colors.background', 'rgba(255, 165, 0, 0.06)'),
+    overviewRuler: config.get<string>(
+      'colors.overviewRuler',
+      'rgba(255, 165, 0, 0.4)',
+    ),
+  }
+}
+
+function buildGutterDotSvg(color: string): string {
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">',
+    `  <circle cx="8" cy="8" r="4" fill="${color}"/>`,
+    '</svg>',
+  ].join('\n')
+}
+
+async function writeGutterDotSvg(
   context: vscode.ExtensionContext,
-): {
+  color: string,
+): Promise<vscode.Uri> {
+  const dir = context.globalStorageUri
+  await vscode.workspace.fs.createDirectory(dir)
+  const svgUri = vscode.Uri.joinPath(dir, 'gutter-dot.svg')
+  const content = new TextEncoder().encode(buildGutterDotSvg(color))
+  await vscode.workspace.fs.writeFile(svgUri, content)
+  return svgUri
+}
+
+export async function createDecorationTypes(
+  context: vscode.ExtensionContext,
+): Promise<{
   bgDecoration: vscode.TextEditorDecorationType
   gutterDecoration: vscode.TextEditorDecorationType
-} {
+}> {
+  const colors = getDecorationColors()
+
   const bgDecoration = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(255, 165, 0, 0.06)',
+    backgroundColor: colors.background,
     isWholeLine: true,
-    overviewRulerColor: 'rgba(255, 165, 0, 0.4)',
+    overviewRulerColor: colors.overviewRuler,
     overviewRulerLane: vscode.OverviewRulerLane.Left,
   })
 
+  const svgUri = await writeGutterDotSvg(context, colors.gutterDot)
+
   const gutterDecoration = vscode.window.createTextEditorDecorationType({
-    gutterIconPath: vscode.Uri.joinPath(
-      context.extensionUri,
-      'resources',
-      'gutter-dot.svg',
-    ).fsPath,
+    gutterIconPath: svgUri,
     gutterIconSize: '60%',
   })
-
-  context.subscriptions.push(bgDecoration, gutterDecoration)
 
   return { bgDecoration, gutterDecoration }
 }

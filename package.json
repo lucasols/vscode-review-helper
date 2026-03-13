@@ -161,6 +161,26 @@
         }
       ]
     },
-    "keybindings": []
+    "keybindings": [],
+    "configuration": {
+      "title": "Review Helper",
+      "properties": {
+        "reviewHelper.colors.gutterDot": {
+          "type": "string",
+          "default": "rgba(72, 199, 90, 0.85)",
+          "description": "Color of the gutter dot indicator for unreviewed lines."
+        },
+        "reviewHelper.colors.background": {
+          "type": "string",
+          "default": "rgba(255, 165, 0, 0.06)",
+          "description": "Background color for unreviewed lines."
+        },
+        "reviewHelper.colors.overviewRuler": {
+          "type": "string",
+          "default": "rgba(255, 165, 0, 0.4)",
+          "description": "Color of the overview ruler marker for unreviewed lines."
+        }
+      }
+    }
   }
 }

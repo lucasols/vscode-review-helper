@@ -24,8 +24,30 @@ export function activate(context: vscode.ExtensionContext): void {
   stateWatcher.onDidDelete(() => manager.reloadFromDisk())
   context.subscriptions.push(stateWatcher)
 
-  // Create decorations
-  const { bgDecoration, gutterDecoration } = createDecorationTypes(context)
+  // Mutable decoration references (updated on config change)
+  let bgDecoration: vscode.TextEditorDecorationType | undefined
+  let gutterDecoration: vscode.TextEditorDecorationType | undefined
+
+  function updateAllEditors(): void {
+    if (!bgDecoration || !gutterDecoration) return
+    for (const editor of vscode.window.visibleTextEditors) {
+      updateDecorations(editor, manager, bgDecoration, gutterDecoration)
+    }
+  }
+
+  async function initDecorations(): Promise<void> {
+    bgDecoration?.dispose()
+    gutterDecoration?.dispose()
+
+    const decorations = await createDecorationTypes(context)
+    bgDecoration = decorations.bgDecoration
+    gutterDecoration = decorations.gutterDecoration
+
+    updateAllEditors()
+  }
+
+  // Create decorations (async)
+  void initDecorations()
 
   // Register commands
   registerCommands(context, manager)
@@ -45,13 +67,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // Status bar
   const statusBar = new ReviewStatusBar(manager)
   context.subscriptions.push(statusBar)
-
-  // Update decorations for visible editors
-  function updateAllEditors(): void {
-    for (const editor of vscode.window.visibleTextEditors) {
-      updateDecorations(editor, manager, bgDecoration, gutterDecoration)
-    }
-  }
 
   // Update the when-clause context for the active file
   function updateActiveFileContext(): void {
@@ -104,7 +119,9 @@ export function activate(context: vscode.ExtensionContext): void {
         manager.handleFileOpened(relativePath, lines)
       }
 
-      updateDecorations(editor, manager, bgDecoration, gutterDecoration)
+      if (bgDecoration && gutterDecoration) {
+        updateDecorations(editor, manager, bgDecoration, gutterDecoration)
+      }
     }),
   )
 
@@ -142,6 +159,15 @@ export function activate(context: vscode.ExtensionContext): void {
           .asRelativePath(newUri, false)
           .replace(/\\/g, '/')
         manager.renameFile(oldPath, newPath)
+      }
+    }),
+  )
+
+  // Listen for configuration changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('reviewHelper.colors')) {
+        void initDecorations()
       }
     }),
   )
