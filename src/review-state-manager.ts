@@ -34,6 +34,7 @@ export class ReviewStateManager {
   readonly onDidChange = this._onDidChange.event
 
   async load(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+    this.cancelAllPendingVerifications()
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, REVIEW_STATE_FILE)
     try {
       const data = await vscode.workspace.fs.readFile(uri)
@@ -124,6 +125,7 @@ export class ReviewStateManager {
   removeFile(relativePath: string): void {
     if (!this.state.files[relativePath]) return
 
+    this.cancelPendingVerification(relativePath)
     delete this.state.files[relativePath]
     logInfo(`File removed: ${relativePath}`)
     this._onDidChange.fire()
@@ -134,6 +136,7 @@ export class ReviewStateManager {
     const fileState = this.state.files[oldPath]
     if (!fileState) return
 
+    this.cancelPendingVerification(oldPath)
     delete this.state.files[oldPath]
     this.state.files[newPath] = {
       ...fileState,
@@ -219,6 +222,7 @@ export class ReviewStateManager {
     const fileState = this.state.files[relativePath]
     if (!fileState) return
 
+    this.cancelPendingVerification(relativePath)
     this.state.files[relativePath] = {
       ...fileState,
       reviewedRanges: [],
@@ -229,6 +233,7 @@ export class ReviewStateManager {
   }
 
   clearAll(): void {
+    this.cancelAllPendingVerifications()
     this.state = createDefaultState()
     logInfo('Cleared all review state')
     this._onDidChange.fire()
@@ -275,6 +280,21 @@ export class ReviewStateManager {
     this.scheduleVerification(relativePath, documentLines)
   }
 
+  private cancelPendingVerification(relativePath: string): void {
+    const existing = this.pendingVerifications.get(relativePath)
+    if (existing) {
+      clearTimeout(existing.timeout)
+      this.pendingVerifications.delete(relativePath)
+    }
+  }
+
+  private cancelAllPendingVerifications(): void {
+    for (const pending of this.pendingVerifications.values()) {
+      clearTimeout(pending.timeout)
+    }
+    this.pendingVerifications.clear()
+  }
+
   private scheduleVerification(relativePath: string, documentLines: string[]): void {
     const existing = this.pendingVerifications.get(relativePath)
     if (existing) {
@@ -314,6 +334,7 @@ export class ReviewStateManager {
     const folder = this.getWorkspaceFolder()
     if (!folder) return
 
+    this.cancelAllPendingVerifications()
     logInfo('Rechecking all tracked files')
     let changed = false
     let checkedCount = 0
@@ -361,6 +382,7 @@ export class ReviewStateManager {
     if (!fileState) return
     if (fileState.reviewedRanges.length === 0) return
 
+    this.cancelPendingVerification(relativePath)
     logDebug(`File opened, reverifying: ${relativePath}`)
     const reverified = fullReverify(fileState.reviewedRanges, documentLines)
 
@@ -380,11 +402,11 @@ export class ReviewStateManager {
   }
 
   dispose(): void {
+    // Flush pending verifications before saving
     for (const pending of this.pendingVerifications.values()) {
-      clearTimeout(pending.timeout)
       this.runVerification(pending.relativePath, pending.documentLines)
     }
-    this.pendingVerifications.clear()
+    this.cancelAllPendingVerifications()
     if (this.saveTimeout !== undefined) {
       clearTimeout(this.saveTimeout)
       this.saveNow()
