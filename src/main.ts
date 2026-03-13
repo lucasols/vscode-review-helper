@@ -1,36 +1,19 @@
 import * as vscode from 'vscode'
 import { ReviewStateManager } from './review-state-manager'
 import { registerCommands } from './commands'
-import {
-  createDecorationTypes,
-  createGutterDotSvg,
-  updateDecorations,
-} from './decorations'
+import { createDecorationTypes, updateDecorations } from './decorations'
 import { ReviewTreeProvider } from './review-tree-provider'
 import { ReviewFileDecorationProvider } from './file-decoration-provider'
 import { ReviewStatusBar } from './status-bar'
 
-export async function activate(
-  context: vscode.ExtensionContext,
-): Promise<void> {
+export function activate(context: vscode.ExtensionContext): void {
   const manager = new ReviewStateManager()
 
-  // Load persisted state
+  // Load persisted state (non-blocking - UI updates via onDidChange when ready)
   const folder = vscode.workspace.workspaceFolders?.[0]
   if (folder) {
-    await manager.load(folder)
+    void manager.load(folder)
   }
-
-  // Write gutter dot SVG to dist
-  const gutterDotUri = vscode.Uri.joinPath(
-    context.extensionUri,
-    'dist',
-    'gutter-dot.svg',
-  )
-  await vscode.workspace.fs.writeFile(
-    gutterDotUri,
-    new TextEncoder().encode(createGutterDotSvg()),
-  )
 
   // Watch for external changes to review-state.json
   const stateWatcher = vscode.workspace.createFileSystemWatcher(

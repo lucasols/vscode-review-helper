@@ -4,7 +4,7 @@
   "publisher": "lucasols",
   "version": "0.1.0",
   "description": "Track file review progress with line-level granularity",
-  "main": "./dist/main.mjs",
+  "main": "./dist/main.js",
   "repository": "lucasols/vscode-review-helper",
   "scripts": {
     "lint": "pnpm tsc && pnpm eslint",
@@ -40,7 +40,7 @@
     "vscode": ">=1.90.0",
     "node": ">=18.0.0"
   },
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [],
   "contributes": {
     "commands": [
       {

@@ -3,10 +3,10 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: ['src/main.ts'],
   clean: true,
-  format: ['esm'],
-  splitting: true,
+  format: ['cjs'],
+  splitting: false,
   external: ['vscode'],
-  sourcemap: true,
+  sourcemap: false,
   esbuildOptions(options) {
     options.mangleProps = /[^_]_$/
   },
