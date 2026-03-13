@@ -152,5 +152,9 @@ export function registerCommands(
       manager.clearAll()
       vscode.window.showInformationMessage('Cleared all review state')
     }),
+
+    vscode.commands.registerCommand('reviewHelper.recheckAll', async () => {
+      await manager.recheckAllFiles()
+    }),
   )
 }

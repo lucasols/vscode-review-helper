@@ -239,6 +239,42 @@ export class ReviewStateManager {
     this.scheduleSave()
   }
 
+  async recheckAllFiles(): Promise<void> {
+    const folder = this.getWorkspaceFolder()
+    if (!folder) return
+
+    let changed = false
+    for (const [relativePath, fileState] of Object.entries(this.state.files)) {
+      if (fileState.reviewedRanges.length === 0) continue
+
+      const uri = vscode.Uri.joinPath(folder.uri, relativePath)
+      try {
+        const data = await vscode.workspace.fs.readFile(uri)
+        const content = new TextDecoder().decode(data)
+        const documentLines = content.split('\n')
+
+        const reverified = fullReverify(
+          fileState.reviewedRanges,
+          documentLines,
+        )
+
+        this.state.files[relativePath] = {
+          ...fileState,
+          totalLines: documentLines.length,
+          reviewedRanges: reverified,
+        }
+        changed = true
+      } catch {
+        // File doesn't exist on disk, keep state as-is
+      }
+    }
+
+    if (changed) {
+      this._onDidChange.fire()
+      this.scheduleSave()
+    }
+  }
+
   handleFileOpened(relativePath: string, documentLines: string[]): void {
     const fileState = this.state.files[relativePath]
     if (!fileState) return

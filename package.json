@@ -84,6 +84,12 @@
         "title": "Clear All Review State",
         "category": "Review Helper",
         "icon": "$(trash)"
+      },
+      {
+        "command": "reviewHelper.recheckAll",
+        "title": "Recheck All Files",
+        "category": "Review Helper",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -128,6 +134,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "reviewHelper.recheckAll",
+          "when": "view == reviewHelper.files",
+          "group": "navigation"
+        },
         {
           "command": "reviewHelper.clearAllReviews",
           "when": "view == reviewHelper.files",
