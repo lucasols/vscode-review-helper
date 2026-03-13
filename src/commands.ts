@@ -101,7 +101,7 @@ export function registerCommands(
       const endLine = selection.end.line + 1
 
       if (!manager.getFileState(relativePath)) {
-        manager.addFile(relativePath, editor.document.lineCount)
+        manager.markFileReviewed(relativePath, getDocumentLines(editor.document))
       }
 
       manager.markSelectionUnreviewed(relativePath, startLine, endLine)
