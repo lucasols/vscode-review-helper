@@ -20,11 +20,11 @@ interface DecorationColors {
 function getDecorationColors(): DecorationColors {
   const config = vscode.workspace.getConfiguration('reviewHelper')
   return {
-    gutterDot: config.get<string>('colors.gutterDot', 'rgba(72, 199, 90, 0.85)'),
-    background: config.get<string>('colors.background', 'rgba(255, 165, 0, 0.06)'),
+    gutterDot: config.get<string>('colors.gutterDot', 'rgba(0, 188, 212, 0.85)'),
+    background: config.get<string>('colors.background', 'rgba(0, 188, 212, 0.06)'),
     overviewRuler: config.get<string>(
       'colors.overviewRuler',
-      'rgba(255, 165, 0, 0.4)',
+      'rgba(0, 188, 212, 0.4)',
     ),
   }
 }
@@ -67,7 +67,7 @@ export async function createDecorationTypes(
   const svgUri = await writeGutterDotSvg(context, colors.gutterDot)
 
   const gutterDecoration = vscode.window.createTextEditorDecorationType({
-    gutterIconPath: svgUri,
+    gutterIconPath: svgUri.fsPath,
     gutterIconSize: '60%',
   })
 
