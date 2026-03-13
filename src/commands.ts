@@ -100,6 +100,10 @@ export function registerCommands(
       const startLine = selection.start.line + 1
       const endLine = selection.end.line + 1
 
+      if (!manager.getFileState(relativePath)) {
+        manager.addFile(relativePath, editor.document.lineCount)
+      }
+
       manager.markSelectionUnreviewed(relativePath, startLine, endLine)
     }),
 

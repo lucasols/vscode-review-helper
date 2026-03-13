@@ -124,7 +124,6 @@
         },
         {
           "command": "reviewHelper.markUnreviewed",
-          "when": "reviewHelper.activeFileTracked",
           "group": "reviewHelper"
         }
       ],
