@@ -1,111 +1,7 @@
 import type { ReviewedRange } from './types'
 import { hashLine, normalizeRanges } from './review-state'
 
-interface ContentChange {
-  /** 1-based start line of the change in the original document */
-  startLine: number
-  /** Number of lines removed from the original document */
-  linesRemoved: number
-  /** Number of lines inserted */
-  linesInserted: number
-}
-
-/**
- * Adjust reviewed ranges for document content changes.
- * Only shifts line numbers for insertions/deletions - does NOT verify hashes.
- * Hashes are preserved so that verification (verifyRanges) can check
- * whether the content actually changed.
- */
-export function adjustRangesForChanges(
-  ranges: ReviewedRange[],
-  changes: ContentChange[],
-): ReviewedRange[] {
-  let adjusted = ranges.map((r) => ({ ...r, lineHashes: { ...r.lineHashes } }))
-
-  // Apply each change, sorted from bottom to top to avoid cascading offsets
-  const sortedChanges = [...changes].sort((a, b) => b.startLine - a.startLine)
-
-  for (const change of sortedChanges) {
-    adjusted = applyChange(adjusted, change)
-  }
-
-  return normalizeRanges(adjusted)
-}
-
-function applyChange(
-  ranges: ReviewedRange[],
-  change: ContentChange,
-): ReviewedRange[] {
-  const { startLine, linesRemoved, linesInserted } = change
-  const endOfRemoval = startLine + linesRemoved - 1
-  const delta = linesInserted - linesRemoved
-  const result: ReviewedRange[] = []
-
-  for (const range of ranges) {
-    if (range.endLine < startLine) {
-      // Range is entirely before the change - keep as is
-      result.push(range)
-    } else if (range.startLine > endOfRemoval) {
-      // Range is entirely after the change - shift by delta
-      const shiftedHashes: Record<number, string> = {}
-      for (const [lineStr, hash] of Object.entries(range.lineHashes)) {
-        shiftedHashes[Number(lineStr) + delta] = hash
-      }
-      result.push({
-        startLine: range.startLine + delta,
-        endLine: range.endLine + delta,
-        lineHashes: shiftedHashes,
-      })
-    } else {
-      // Range overlaps with the change
-      // Build a single range with remapped hashes, then let reverification
-      // decide which lines are still valid (supports undo scenarios)
-      const newHashes: Record<number, string> = {}
-
-      // Lines before the change zone (within this range)
-      for (let line = range.startLine; line < startLine; line++) {
-        const hash = range.lineHashes[line]
-        if (hash !== undefined) {
-          newHashes[line] = hash
-        }
-      }
-
-      // Lines in the change zone: keep hashes for 1:1 mapped positions
-      // so reverification can check if content was restored (undo)
-      const mappable = Math.min(linesRemoved, linesInserted)
-      for (let i = 0; i < mappable; i++) {
-        const oldLine = startLine + i
-        if (oldLine <= range.endLine) {
-          const hash = range.lineHashes[oldLine]
-          if (hash !== undefined) {
-            newHashes[startLine + i] = hash
-          }
-        }
-      }
-
-      // Lines after the change zone (within this range), shifted by delta
-      for (let line = endOfRemoval + 1; line <= range.endLine; line++) {
-        const hash = range.lineHashes[line]
-        if (hash !== undefined) {
-          newHashes[line + delta] = hash
-        }
-      }
-
-      const newEnd = range.endLine + delta
-      if (newEnd >= range.startLine && Object.keys(newHashes).length > 0) {
-        result.push({
-          startLine: range.startLine,
-          endLine: newEnd,
-          lineHashes: newHashes,
-        })
-      }
-    }
-  }
-
-  return result
-}
-
-/** Re-verify hashes: any line whose hash doesn't match current content is removed */
+/** Keep only lines whose stored hashes still match the current document. */
 function reverifyHashes(
   ranges: ReviewedRange[],
   documentLines: string[],
@@ -173,21 +69,8 @@ function reverifyHashes(
 }
 
 /**
- * Verify hashes against current document content, returning only lines
- * that still match. Used for computing decorations and progress.
- * Does NOT mutate stored state - returns a filtered view.
- */
-export function verifyRanges(
-  ranges: ReviewedRange[],
-  documentLines: string[],
-): ReviewedRange[] {
-  return normalizeRanges(reverifyHashes(ranges, documentLines))
-}
-
-/**
  * Realign reviewed hashes to new line positions by matching content order.
- * Handles external edits (git operations, other editors) where lines shifted
- * without going through handleDocumentChange.
+ * Handles changes by matching old reviewed content to the new document.
  *
  * Uses a patience-diff algorithm: anchors on lines unique in both sequences,
  * then recursively matches between anchors using LCS for non-unique regions.

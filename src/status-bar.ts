@@ -1,7 +1,6 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
 import { computeFileProgress, computeTotalProgress } from './review-state'
-import { verifyRanges } from './change-tracker'
 
 export class ReviewStatusBar {
   private readonly statusBarItem: vscode.StatusBarItem
@@ -49,12 +48,8 @@ export class ReviewStatusBar {
           for (let i = 0; i < editor.document.lineCount; i++) {
             documentLines.push(editor.document.lineAt(i).text)
           }
-          const verified = verifyRanges(
-            fileState.reviewedRanges,
-            documentLines,
-          )
           const progress = Math.round(
-            computeFileProgress(fileState, verified, documentLines) * 100,
+            computeFileProgress(fileState, fileState.reviewedRanges, documentLines) * 100,
           )
           const total = Math.round(
             computeTotalProgress(state.files) * 100,

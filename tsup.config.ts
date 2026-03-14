@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: ['src/main.ts'],
   clean: true,
-  format: ['cjs'],
+  format: ['esm'],
   splitting: false,
   external: ['vscode'],
   sourcemap: false,

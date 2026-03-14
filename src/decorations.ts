@@ -1,7 +1,6 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
 import { getUnreviewedRanges } from './review-state'
-import { verifyRanges } from './change-tracker'
 
 function getRelativePath(editor: vscode.TextEditor): string | undefined {
   const folder = vscode.workspace.workspaceFolders?.[0]
@@ -128,10 +127,9 @@ export function updateDecorations(
     documentLines.push(editor.document.lineAt(i).text)
   }
 
-  const verified = verifyRanges(fileState.reviewedRanges, documentLines)
   const unreviewed = getUnreviewedRanges(
     { ...fileState, totalLines: editor.document.lineCount },
-    verified,
+    fileState.reviewedRanges,
     documentLines,
   )
   const decorationRanges = unreviewed.map(

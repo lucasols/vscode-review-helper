@@ -4,6 +4,7 @@
   "publisher": "lucasols",
   "version": "0.1.0",
   "description": "Track file review progress with line-level granularity",
+  "type": "module",
   "main": "./dist/main.js",
   "repository": "lucasols/vscode-review-helper",
   "scripts": {
@@ -14,9 +15,14 @@
     "dev": "tsup --watch --minify --dts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build-and-install": "pnpm build && pnpm install-extension",
     "install-extension": "code --install-extension $(ls -t review-helper-*.vsix | head -n 1)"
   },
-  "keywords": ["review", "code-review", "review-helper"],
+  "keywords": [
+    "review",
+    "code-review",
+    "review-helper"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
