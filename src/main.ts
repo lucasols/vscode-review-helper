@@ -6,6 +6,10 @@ import { ReviewTreeProvider } from './review-tree-provider'
 import { ReviewFileDecorationProvider } from './file-decoration-provider'
 import { ReviewStatusBar } from './status-bar'
 import { initLogger, logInfo } from './logger'
+import {
+  findAbsolutePathEntries,
+  notifyAbsolutePathEntries,
+} from './absolute-path-detector'
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = initLogger()
@@ -103,6 +107,22 @@ export function activate(context: vscode.ExtensionContext): void {
     manager.onDidChange(() => {
       updateAllEditors()
       updateActiveFileContext()
+    }),
+  )
+
+  // Detect absolute paths in review state
+  const notifiedAbsolutePaths = new Set<string>()
+  context.subscriptions.push(
+    manager.onDidChange(() => {
+      const wsFolder = vscode.workspace.workspaceFolders?.[0]
+      if (!wsFolder) return
+      const entries = findAbsolutePathEntries(
+        manager.getState(),
+        wsFolder.uri.fsPath,
+      )
+      if (entries.length > 0) {
+        notifyAbsolutePathEntries(entries, manager, notifiedAbsolutePaths)
+      }
     }),
   )
 
