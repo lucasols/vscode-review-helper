@@ -48,10 +48,10 @@ export class ReviewStatusBar {
           for (let i = 0; i < editor.document.lineCount; i++) {
             documentLines.push(editor.document.lineAt(i).text)
           }
-          const progress = Math.round(
+          const progress = Math.floor(
             computeFileProgress(fileState, fileState.reviewedRanges, documentLines) * 100,
           )
-          const total = Math.round(
+          const total = Math.floor(
             computeTotalProgress(state.files) * 100,
           )
           this.statusBarItem.text = `$(checklist) Review: ${String(progress)}% | Total: ${String(total)}%`
@@ -62,7 +62,7 @@ export class ReviewStatusBar {
       }
     }
 
-    const total = Math.round(computeTotalProgress(state.files) * 100)
+    const total = Math.floor(computeTotalProgress(state.files) * 100)
     this.statusBarItem.text = `$(checklist) Review: ${String(total)}%`
     this.statusBarItem.tooltip = `Total: ${String(total)}% across ${String(fileCount)} files`
     this.statusBarItem.show()

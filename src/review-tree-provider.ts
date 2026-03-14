@@ -10,7 +10,7 @@ export class ReviewTreeItem extends vscode.TreeItem {
     progress: number,
     fileExists: boolean,
   ) {
-    const percentage = Math.round(progress * 100)
+    const percentage = Math.floor(progress * 100)
     const fileName = relativePath.split('/').pop() ?? relativePath
     const label = fileExists
       ? `${fileName} (${String(percentage)}%)`
