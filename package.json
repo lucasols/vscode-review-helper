@@ -40,7 +40,9 @@
     "vscode": ">=1.90.0",
     "node": ">=18.0.0"
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "workspaceContains:.vscode/review-state.json"
+  ],
   "contributes": {
     "commands": [
       {
