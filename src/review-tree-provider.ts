@@ -65,10 +65,19 @@ export class ReviewTreeProvider
     new vscode.EventEmitter<ReviewTreeItem | undefined | void>()
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event
   private readonly onDidChangeSubscription: vscode.Disposable
+  private refreshTimeout: ReturnType<typeof setTimeout> | undefined
+
+  private static readonly REFRESH_DEBOUNCE_MS = 300
 
   constructor(private readonly manager: ReviewStateManager) {
     this.onDidChangeSubscription = manager.onDidChange(() => {
-      this._onDidChangeTreeData.fire()
+      if (this.refreshTimeout !== undefined) {
+        clearTimeout(this.refreshTimeout)
+      }
+      this.refreshTimeout = setTimeout(() => {
+        this.refreshTimeout = undefined
+        this._onDidChangeTreeData.fire()
+      }, ReviewTreeProvider.REFRESH_DEBOUNCE_MS)
     })
   }
 
@@ -99,6 +108,9 @@ export class ReviewTreeProvider
   }
 
   dispose(): void {
+    if (this.refreshTimeout !== undefined) {
+      clearTimeout(this.refreshTimeout)
+    }
     this.onDidChangeSubscription.dispose()
     this._onDidChangeTreeData.dispose()
   }
