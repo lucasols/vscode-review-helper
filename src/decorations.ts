@@ -11,41 +11,70 @@ function getRelativePath(editor: vscode.TextEditor): string | undefined {
     .replace(/\\/g, '/')
 }
 
+interface ColorWithAlpha {
+  hex: string
+  alpha: number
+}
+
 interface DecorationColors {
-  gutterDot: string
-  background: string
-  overviewRuler: string
+  gutterDot: ColorWithAlpha
+  background: ColorWithAlpha
+  overviewRuler: ColorWithAlpha
+}
+
+function hexToRgba(color: ColorWithAlpha): string {
+  const hex = color.hex.replace('#', '')
+  const r = parseInt(hex.substring(0, 2), 16)
+  const g = parseInt(hex.substring(2, 4), 16)
+  const b = parseInt(hex.substring(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${color.alpha})`
 }
 
 function getDecorationColors(): DecorationColors {
   const config = vscode.workspace.getConfiguration('reviewHelper')
   return {
-    gutterDot: config.get<string>('colors.gutterDot', 'rgba(0, 188, 212, 0.85)'),
-    background: config.get<string>('colors.background', 'rgba(0, 188, 212, 0.06)'),
-    overviewRuler: config.get<string>(
-      'colors.overviewRuler',
-      'rgba(0, 188, 212, 0.4)',
-    ),
+    gutterDot: {
+      hex: config.get<string>('colors.gutterDotHex', '#00BCD4'),
+      alpha: config.get<number>('colors.gutterDotAlpha', 0.85),
+    },
+    background: {
+      hex: config.get<string>('colors.backgroundHex', '#00BCD4'),
+      alpha: config.get<number>('colors.backgroundAlpha', 0.06),
+    },
+    overviewRuler: {
+      hex: config.get<string>('colors.overviewRulerHex', '#00BCD4'),
+      alpha: config.get<number>('colors.overviewRulerAlpha', 0.4),
+    },
   }
 }
 
-function buildGutterDotSvg(color: string): string {
+function buildGutterDotSvg(color: ColorWithAlpha): string {
   return [
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">',
-    `  <circle cx="8" cy="8" r="4" fill="${color}"/>`,
+    `  <circle cx="8" cy="8" r="4" fill="${color.hex}" fill-opacity="${color.alpha}"/>`,
     '</svg>',
   ].join('\n')
 }
 
+let previousSvgUri: vscode.Uri | undefined
+
 async function writeGutterDotSvg(
   context: vscode.ExtensionContext,
-  color: string,
+  color: ColorWithAlpha,
 ): Promise<vscode.Uri> {
   const dir = context.globalStorageUri
   await vscode.workspace.fs.createDirectory(dir)
-  const svgUri = vscode.Uri.joinPath(dir, 'gutter-dot.svg')
+  // Use a unique filename each time to bust VSCode's icon cache
+  const filename = `gutter-dot-${Date.now()}.svg`
+  const svgUri = vscode.Uri.joinPath(dir, filename)
   const content = new TextEncoder().encode(buildGutterDotSvg(color))
   await vscode.workspace.fs.writeFile(svgUri, content)
+
+  if (previousSvgUri) {
+    vscode.workspace.fs.delete(previousSvgUri).then(undefined, () => {})
+  }
+  previousSvgUri = svgUri
+
   return svgUri
 }
 
@@ -58,9 +87,9 @@ export async function createDecorationTypes(
   const colors = getDecorationColors()
 
   const bgDecoration = vscode.window.createTextEditorDecorationType({
-    backgroundColor: colors.background,
+    backgroundColor: hexToRgba(colors.background),
     isWholeLine: true,
-    overviewRulerColor: colors.overviewRuler,
+    overviewRulerColor: hexToRgba(colors.overviewRuler),
     overviewRulerLane: vscode.OverviewRulerLane.Left,
   })
 

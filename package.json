@@ -165,20 +165,41 @@
     "configuration": {
       "title": "Review Helper",
       "properties": {
-        "reviewHelper.colors.gutterDot": {
+        "reviewHelper.colors.gutterDotHex": {
           "type": "string",
-          "default": "rgba(0, 188, 212, 0.85)",
-          "description": "Color of the gutter dot indicator for unreviewed lines."
+          "default": "#00BCD4",
+          "description": "Hex color of the gutter dot indicator for unreviewed lines."
         },
-        "reviewHelper.colors.background": {
-          "type": "string",
-          "default": "rgba(0, 188, 212, 0.06)",
-          "description": "Background color for unreviewed lines."
+        "reviewHelper.colors.gutterDotAlpha": {
+          "type": "number",
+          "default": 0.85,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Opacity of the gutter dot indicator (0 = transparent, 1 = opaque)."
         },
-        "reviewHelper.colors.overviewRuler": {
+        "reviewHelper.colors.backgroundHex": {
           "type": "string",
-          "default": "rgba(0, 188, 212, 0.4)",
-          "description": "Color of the overview ruler marker for unreviewed lines."
+          "default": "#00BCD4",
+          "description": "Hex color for unreviewed line backgrounds."
+        },
+        "reviewHelper.colors.backgroundAlpha": {
+          "type": "number",
+          "default": 0.06,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Opacity for unreviewed line backgrounds (0 = transparent, 1 = opaque)."
+        },
+        "reviewHelper.colors.overviewRulerHex": {
+          "type": "string",
+          "default": "#00BCD4",
+          "description": "Hex color of the overview ruler marker for unreviewed lines."
+        },
+        "reviewHelper.colors.overviewRulerAlpha": {
+          "type": "number",
+          "default": 0.4,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Opacity of the overview ruler marker (0 = transparent, 1 = opaque)."
         }
       }
     }
