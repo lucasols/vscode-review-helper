@@ -1,23 +1,36 @@
 import * as vscode from 'vscode'
-import type { FileReviewState, ReviewState } from './types'
+import type {
+  FileReviewSnapshot,
+  FileReviewState,
+  ReviewedRange,
+  ReviewState,
+} from './types'
 import {
-  markLinesReviewed,
-  removeReviewedLines,
   createEmptyFileState,
-  normalizeRanges,
-  hashLine,
+  fingerprintDocumentLineHashes,
   hashDocumentLines,
+  hashLine,
+  markLinesReviewed,
+  normalizeRanges,
+  removeReviewedLines,
 } from './review-state'
-import { fullReverify, detectDeletionAdjacentLines } from './change-tracker'
+import { detectDeletionAdjacentLines, fullReverify } from './change-tracker'
 import {
   createDefaultState,
   deserializeState,
   serializeState,
 } from './state-persistence'
-import { logInfo, logError, logDebug, logWarn } from './logger'
+import { logDebug, logError, logInfo, logWarn } from './logger'
 
 const REVIEW_STATE_FILE = '.vscode/review-state.json'
 const SAVE_DEBOUNCE_MS = 500
+const MAX_SNAPSHOTS_PER_FILE = 20
+
+interface DocumentIdentity {
+  totalLines: number
+  documentLineHashes: string[]
+  documentFingerprint: string
+}
 
 export class ReviewStateManager {
   private state: ReviewState = createDefaultState()
@@ -110,8 +123,7 @@ export class ReviewStateManager {
       totalLines,
     )
     logInfo(`File added: ${relativePath} (${totalLines} lines)`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   removeFile(relativePath: string): void {
@@ -119,8 +131,7 @@ export class ReviewStateManager {
 
     delete this.state.files[relativePath]
     logInfo(`File removed: ${relativePath}`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   renameFile(oldPath: string, newPath: string): void {
@@ -133,8 +144,7 @@ export class ReviewStateManager {
       relativePath: newPath,
     }
     logInfo(`File renamed: ${oldPath} → ${newPath}`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   markSelectionReviewed(
@@ -143,11 +153,8 @@ export class ReviewStateManager {
     endLine: number,
     documentLines: string[],
   ): void {
-    let fileState = this.state.files[relativePath]
-    if (!fileState) {
-      fileState = createEmptyFileState(relativePath, documentLines.length)
-      this.state.files[relativePath] = fileState
-    }
+    const fileState = this.state.files[relativePath]
+      ?? createEmptyFileState(relativePath, documentLines.length)
 
     const updated = markLinesReviewed(
       fileState,
@@ -156,7 +163,6 @@ export class ReviewStateManager {
       documentLines,
     )
 
-    // Filter out deletion-adjacent lines that fall within the reviewed range
     if (updated.deletionAdjacentLines && updated.deletionAdjacentLines.length > 0) {
       updated.deletionAdjacentLines = updated.deletionAdjacentLines.filter(
         (line) => line < startLine || line > endLine,
@@ -166,35 +172,42 @@ export class ReviewStateManager {
       }
     }
 
-    this.state.files[relativePath] = updated
+    this.state.files[relativePath] = this.syncSnapshots(
+      fileState,
+      this.hydrateDocumentIdentity(updated, documentLines),
+      { manualMutation: true },
+    )
     logInfo(`Marked reviewed: ${relativePath} lines ${startLine}-${endLine}`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   markSelectionUnreviewed(
     relativePath: string,
     startLine: number,
     endLine: number,
+    documentLines?: string[],
   ): void {
     const fileState = this.state.files[relativePath]
     if (!fileState) return
 
-    this.state.files[relativePath] = removeReviewedLines(
+    const updated = removeReviewedLines(
       fileState,
       startLine,
       endLine,
     )
+
+    this.state.files[relativePath] = this.syncSnapshots(
+      fileState,
+      this.hydrateDocumentIdentity(updated, documentLines),
+      { manualMutation: true },
+    )
     logInfo(`Marked unreviewed: ${relativePath} lines ${startLine}-${endLine}`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   markFileReviewed(relativePath: string, documentLines: string[]): void {
-    let fileState = this.state.files[relativePath]
-    if (!fileState) {
-      fileState = createEmptyFileState(relativePath, documentLines.length)
-    }
+    const fileState = this.state.files[relativePath]
+      ?? createEmptyFileState(relativePath, documentLines.length)
 
     const lineHashes: Record<number, string> = {}
     for (let i = 0; i < documentLines.length; i++) {
@@ -204,43 +217,53 @@ export class ReviewStateManager {
       }
     }
 
-    this.state.files[relativePath] = {
-      ...fileState,
-      totalLines: documentLines.length,
-      reviewedRanges: normalizeRanges([
+    this.state.files[relativePath] = this.syncSnapshots(
+      fileState,
+      this.hydrateDocumentIdentity(
         {
-          startLine: 1,
-          endLine: documentLines.length,
-          lineHashes,
+          ...fileState,
+          totalLines: documentLines.length,
+          reviewedRanges: normalizeRanges([
+            {
+              startLine: 1,
+              endLine: documentLines.length,
+              lineHashes,
+            },
+          ]),
+          deletionAdjacentLines: undefined,
         },
-      ]),
-      documentLineHashes: hashDocumentLines(documentLines),
-      deletionAdjacentLines: undefined,
-    }
+        documentLines,
+      ),
+      { manualMutation: true },
+    )
     logInfo(`Marked entire file reviewed: ${relativePath} (${documentLines.length} lines)`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
-  clearFileReview(relativePath: string): void {
+  clearFileReview(relativePath: string, documentLines?: string[]): void {
     const fileState = this.state.files[relativePath]
     if (!fileState) return
 
-    this.state.files[relativePath] = {
-      ...fileState,
-      reviewedRanges: [],
-      deletionAdjacentLines: undefined,
-    }
+    this.state.files[relativePath] = this.syncSnapshots(
+      fileState,
+      this.hydrateDocumentIdentity(
+        {
+          ...fileState,
+          reviewedRanges: [],
+          deletionAdjacentLines: undefined,
+        },
+        documentLines,
+      ),
+      { manualMutation: true },
+    )
     logInfo(`Cleared review: ${relativePath}`)
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   clearAll(): void {
     this.state = createDefaultState()
     logInfo('Cleared all review state')
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.fireDidChange()
   }
 
   handleDocumentChange(
@@ -256,50 +279,19 @@ export class ReviewStateManager {
     documentLines: string[],
   ): void {
     const fileState = this.state.files[relativePath]
-    if (!fileState) return
-    if (fileState.reviewedRanges.length === 0) return
+    if (!fileState || !this.hasVersionedState(fileState)) return
 
     logDebug(`Document change: ${relativePath} (${changes.length} change(s), totalLines=${totalLines})`)
 
-    const reverified = fullReverify(
-      fileState.reviewedRanges,
+    const resolved = this.resolveDocumentState(
+      relativePath,
+      fileState,
       documentLines,
-      fileState.documentLineHashes,
     )
+    if (this.sameFileState(fileState, resolved)) return
 
-    let deletionAdjacentLines: number[] | undefined
-    if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
-      const detected = detectDeletionAdjacentLines(
-        fileState.reviewedRanges,
-        fileState.documentLineHashes,
-        documentLines,
-        fileState.deletionAdjacentLines ?? [],
-      )
-      deletionAdjacentLines = detected.length > 0 ? detected : undefined
-    }
-
-    // Remove deletion-adjacent lines from reviewed ranges
-    let finalRanges = reverified
-    if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
-      let state: FileReviewState = {
-        ...fileState,
-        reviewedRanges: finalRanges,
-      }
-      for (const line of deletionAdjacentLines) {
-        state = removeReviewedLines(state, line, line)
-      }
-      finalRanges = state.reviewedRanges
-    }
-
-    this.state.files[relativePath] = {
-      ...fileState,
-      totalLines,
-      reviewedRanges: finalRanges,
-      documentLineHashes: hashDocumentLines(documentLines),
-      deletionAdjacentLines,
-    }
-    this._onDidChange.fire()
-    this.scheduleSave()
+    this.state.files[relativePath] = resolved
+    this.fireDidChange()
   }
 
   async recheckAllFiles(): Promise<void> {
@@ -310,7 +302,7 @@ export class ReviewStateManager {
     let changed = false
     let checkedCount = 0
     for (const [relativePath, fileState] of Object.entries(this.state.files)) {
-      if (fileState.reviewedRanges.length === 0) continue
+      if (!this.hasVersionedState(fileState)) continue
 
       const uri = vscode.Uri.joinPath(folder.uri, relativePath)
       try {
@@ -318,50 +310,16 @@ export class ReviewStateManager {
         const content = new TextDecoder().decode(data)
         const documentLines = content.split('\n')
 
-        const reverified = fullReverify(
-          fileState.reviewedRanges,
+        const resolved = this.resolveDocumentState(
+          relativePath,
+          fileState,
           documentLines,
-          fileState.documentLineHashes,
         )
 
-        const rangesBefore = fileState.reviewedRanges.length
-        const rangesAfter = reverified.length
-        if (rangesBefore !== rangesAfter) {
-          logDebug(`Recheck ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
+        if (!this.sameFileState(fileState, resolved)) {
+          this.state.files[relativePath] = resolved
+          changed = true
         }
-
-        let deletionAdjacentLines: number[] | undefined
-        if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
-          const detected = detectDeletionAdjacentLines(
-            fileState.reviewedRanges,
-            fileState.documentLineHashes,
-            documentLines,
-            fileState.deletionAdjacentLines ?? [],
-          )
-          deletionAdjacentLines = detected.length > 0 ? detected : undefined
-        }
-
-        // Remove deletion-adjacent lines from reviewed ranges
-        let finalRanges = reverified
-        if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
-          let state: FileReviewState = {
-            ...fileState,
-            reviewedRanges: finalRanges,
-          }
-          for (const line of deletionAdjacentLines) {
-            state = removeReviewedLines(state, line, line)
-          }
-          finalRanges = state.reviewedRanges
-        }
-
-        this.state.files[relativePath] = {
-          ...fileState,
-          totalLines: documentLines.length,
-          reviewedRanges: finalRanges,
-          documentLineHashes: hashDocumentLines(documentLines),
-          deletionAdjacentLines,
-        }
-        changed = true
         checkedCount++
       } catch {
         logWarn(`Recheck skipped (file not found): ${relativePath}`)
@@ -370,17 +328,140 @@ export class ReviewStateManager {
 
     logInfo(`Recheck complete: ${checkedCount} file(s) verified`)
     if (changed) {
-      this._onDidChange.fire()
-      this.scheduleSave()
+      this.fireDidChange()
     }
   }
 
   handleFileOpened(relativePath: string, documentLines: string[]): void {
     const fileState = this.state.files[relativePath]
-    if (!fileState) return
-    if (fileState.reviewedRanges.length === 0) return
+    if (!fileState || !this.hasVersionedState(fileState)) return
 
     logDebug(`File opened, reverifying: ${relativePath}`)
+    const resolved = this.resolveDocumentState(
+      relativePath,
+      fileState,
+      documentLines,
+    )
+
+    if (this.sameFileState(fileState, resolved)) return
+
+    this.state.files[relativePath] = resolved
+    this.fireDidChange()
+  }
+
+  private fireDidChange(): void {
+    this._onDidChange.fire()
+    this.scheduleSave()
+  }
+
+  private hasVersionedState(fileState: FileReviewState): boolean {
+    return fileState.reviewedRanges.length > 0
+      || (fileState.documentLineHashes?.length ?? 0) > 0
+      || (fileState.snapshots?.length ?? 0) > 0
+  }
+
+  private createDocumentIdentity(documentLines: string[]): DocumentIdentity {
+    const documentLineHashes = hashDocumentLines(documentLines)
+    return {
+      totalLines: documentLines.length,
+      documentLineHashes,
+      documentFingerprint: fingerprintDocumentLineHashes(documentLineHashes),
+    }
+  }
+
+  private ensureDocumentFingerprint(fileState: FileReviewState): FileReviewState {
+    const documentFingerprint = fileState.documentLineHashes
+      && fileState.documentLineHashes.length > 0
+      ? fingerprintDocumentLineHashes(fileState.documentLineHashes)
+      : undefined
+
+    return { ...fileState, documentFingerprint }
+  }
+
+  private hydrateDocumentIdentity(
+    fileState: FileReviewState,
+    documentLines?: string[],
+  ): FileReviewState {
+    if (!documentLines) {
+      return this.ensureDocumentFingerprint(fileState)
+    }
+
+    return {
+      ...fileState,
+      ...this.createDocumentIdentity(documentLines),
+    }
+  }
+
+  private createSnapshot(fileState: FileReviewState): FileReviewSnapshot | undefined {
+    if (!fileState.documentLineHashes || fileState.documentLineHashes.length === 0) {
+      return undefined
+    }
+
+    const fingerprint = fileState.documentFingerprint
+      ?? fingerprintDocumentLineHashes(fileState.documentLineHashes)
+
+    return {
+      fingerprint,
+      totalLines: fileState.totalLines,
+      reviewedRanges: fileState.reviewedRanges,
+      documentLineHashes: fileState.documentLineHashes,
+      deletionAdjacentLines: fileState.deletionAdjacentLines,
+    }
+  }
+
+  private syncSnapshots(
+    previousState: FileReviewState,
+    nextState: FileReviewState,
+    options: {
+      manualMutation?: boolean
+      touchSnapshot?: boolean
+    } = {},
+  ): FileReviewState {
+    const normalizedNextState = this.ensureDocumentFingerprint(nextState)
+    const snapshot = this.createSnapshot(normalizedNextState)
+    const existingSnapshots = previousState.snapshots ?? []
+    const shouldStoreSnapshot = options.touchSnapshot
+      || options.manualMutation
+      || this.hasEffectiveReviewChange(previousState, normalizedNextState)
+
+    if (!snapshot || !shouldStoreSnapshot) {
+      return existingSnapshots.length > 0
+        ? { ...normalizedNextState, snapshots: existingSnapshots }
+        : normalizedNextState
+    }
+
+    const snapshots = [
+      snapshot,
+      ...existingSnapshots.filter((entry) => entry.fingerprint !== snapshot.fingerprint),
+    ].slice(0, MAX_SNAPSHOTS_PER_FILE)
+
+    return { ...normalizedNextState, snapshots }
+  }
+
+  private resolveDocumentState(
+    relativePath: string,
+    fileState: FileReviewState,
+    documentLines: string[],
+  ): FileReviewState {
+    const identity = this.createDocumentIdentity(documentLines)
+    const snapshot = fileState.snapshots?.find(
+      (entry) => entry.fingerprint === identity.documentFingerprint,
+    )
+
+    if (snapshot) {
+      logDebug(`Restored snapshot: ${relativePath} (${snapshot.fingerprint})`)
+      return this.syncSnapshots(
+        fileState,
+        {
+          ...fileState,
+          ...identity,
+          reviewedRanges: snapshot.reviewedRanges,
+          deletionAdjacentLines: snapshot.deletionAdjacentLines,
+        },
+        { touchSnapshot: true },
+      )
+    }
+
     const reverified = fullReverify(
       fileState.reviewedRanges,
       documentLines,
@@ -393,39 +474,187 @@ export class ReviewStateManager {
       logInfo(`Reverify ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
     }
 
-    let deletionAdjacentLines: number[] | undefined
-    if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
-      const detected = detectDeletionAdjacentLines(
-        fileState.reviewedRanges,
-        fileState.documentLineHashes,
-        documentLines,
-        fileState.deletionAdjacentLines ?? [],
-      )
-      deletionAdjacentLines = detected.length > 0 ? detected : undefined
-    }
+    const deletionAdjacentLines = this.resolveDeletionAdjacentLines(
+      fileState,
+      documentLines,
+    )
 
-    // Remove deletion-adjacent lines from reviewed ranges
-    let finalRanges = reverified
-    if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
-      let state: FileReviewState = {
+    return this.syncSnapshots(
+      fileState,
+      {
         ...fileState,
-        reviewedRanges: finalRanges,
-      }
-      for (const line of deletionAdjacentLines) {
-        state = removeReviewedLines(state, line, line)
-      }
-      finalRanges = state.reviewedRanges
+        ...identity,
+        reviewedRanges: this.removeDeletionAdjacentLines(
+          fileState,
+          reverified,
+          deletionAdjacentLines,
+        ),
+        deletionAdjacentLines,
+      },
+    )
+  }
+
+  private resolveDeletionAdjacentLines(
+    fileState: FileReviewState,
+    documentLines: string[],
+  ): number[] | undefined {
+    if (!fileState.documentLineHashes || fileState.documentLineHashes.length === 0) {
+      return undefined
     }
 
-    this.state.files[relativePath] = {
-      ...fileState,
-      totalLines: documentLines.length,
-      reviewedRanges: finalRanges,
-      documentLineHashes: hashDocumentLines(documentLines),
-      deletionAdjacentLines,
+    const detected = detectDeletionAdjacentLines(
+      fileState.reviewedRanges,
+      fileState.documentLineHashes,
+      documentLines,
+      fileState.deletionAdjacentLines ?? [],
+    )
+
+    return detected.length > 0 ? detected : undefined
+  }
+
+  private removeDeletionAdjacentLines(
+    fileState: FileReviewState,
+    reviewedRanges: ReviewedRange[],
+    deletionAdjacentLines?: number[],
+  ): ReviewedRange[] {
+    if (!deletionAdjacentLines || deletionAdjacentLines.length === 0) {
+      return reviewedRanges
     }
-    this._onDidChange.fire()
-    this.scheduleSave()
+
+    let state: FileReviewState = {
+      ...fileState,
+      reviewedRanges,
+    }
+    for (const line of deletionAdjacentLines) {
+      state = removeReviewedLines(state, line, line)
+    }
+    return state.reviewedRanges
+  }
+
+  private hasEffectiveReviewChange(
+    previousState: FileReviewState,
+    nextState: FileReviewState,
+  ): boolean {
+    return previousState.totalLines !== nextState.totalLines
+      || !this.sameReviewedRanges(previousState.reviewedRanges, nextState.reviewedRanges)
+      || !this.sameNumberArray(
+        previousState.deletionAdjacentLines,
+        nextState.deletionAdjacentLines,
+      )
+  }
+
+  private sameFileState(
+    left: FileReviewState,
+    right: FileReviewState,
+  ): boolean {
+    return left.totalLines === right.totalLines
+      && left.relativePath === right.relativePath
+      && left.documentFingerprint === right.documentFingerprint
+      && this.sameStringArray(left.documentLineHashes, right.documentLineHashes)
+      && this.sameReviewedRanges(left.reviewedRanges, right.reviewedRanges)
+      && this.sameNumberArray(left.deletionAdjacentLines, right.deletionAdjacentLines)
+      && this.sameSnapshots(left.snapshots, right.snapshots)
+  }
+
+  private sameSnapshots(
+    left?: FileReviewSnapshot[],
+    right?: FileReviewSnapshot[],
+  ): boolean {
+    if (!left && !right) return true
+    if (!left || !right || left.length !== right.length) return false
+
+    for (let i = 0; i < left.length; i++) {
+      const leftEntry = left[i]
+      const rightEntry = right[i]
+      if (!leftEntry || !rightEntry) return false
+
+      if (
+        leftEntry.fingerprint !== rightEntry.fingerprint
+        || leftEntry.totalLines !== rightEntry.totalLines
+        || !this.sameStringArray(
+          leftEntry.documentLineHashes,
+          rightEntry.documentLineHashes,
+        )
+        || !this.sameReviewedRanges(
+          leftEntry.reviewedRanges,
+          rightEntry.reviewedRanges,
+        )
+        || !this.sameNumberArray(
+          leftEntry.deletionAdjacentLines,
+          rightEntry.deletionAdjacentLines,
+        )
+      ) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private sameReviewedRanges(
+    left: ReviewedRange[],
+    right: ReviewedRange[],
+  ): boolean {
+    if (left.length !== right.length) return false
+
+    for (let i = 0; i < left.length; i++) {
+      const leftRange = left[i]
+      const rightRange = right[i]
+      if (!leftRange || !rightRange) return false
+
+      if (
+        leftRange.startLine !== rightRange.startLine
+        || leftRange.endLine !== rightRange.endLine
+        || !this.sameLineHashes(leftRange.lineHashes, rightRange.lineHashes)
+      ) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private sameLineHashes(
+    left: Record<number, string>,
+    right: Record<number, string>,
+  ): boolean {
+    const leftEntries = Object.entries(left)
+    const rightEntries = Object.entries(right)
+    if (leftEntries.length !== rightEntries.length) return false
+
+    for (const [line, hash] of leftEntries) {
+      if (right[Number(line)] !== hash) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private sameNumberArray(left?: number[], right?: number[]): boolean {
+    if (!left && !right) return true
+    if (!left || !right || left.length !== right.length) return false
+
+    for (let i = 0; i < left.length; i++) {
+      if (left[i] !== right[i]) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private sameStringArray(left?: string[], right?: string[]): boolean {
+    if (!left && !right) return true
+    if (!left || !right || left.length !== right.length) return false
+
+    for (let i = 0; i < left.length; i++) {
+      if (left[i] !== right[i]) {
+        return false
+      }
+    }
+
+    return true
   }
 
   dispose(): void {

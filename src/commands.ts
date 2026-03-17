@@ -104,13 +104,14 @@ export function registerCommands(
       const selection = editor.selection
       const startLine = selection.start.line + 1
       const endLine = selection.end.line + 1
+      const documentLines = getDocumentLines(editor.document)
 
       logInfo(`Command: markUnreviewed → ${relativePath} lines ${startLine}-${endLine}`)
       if (!manager.getFileState(relativePath)) {
-        manager.markFileReviewed(relativePath, getDocumentLines(editor.document))
+        manager.markFileReviewed(relativePath, documentLines)
       }
 
-      manager.markSelectionUnreviewed(relativePath, startLine, endLine)
+      manager.markSelectionUnreviewed(relativePath, startLine, endLine, documentLines)
     }),
 
     vscode.commands.registerCommand(
@@ -149,6 +150,9 @@ export function registerCommands(
           const editor = vscode.window.activeTextEditor
           if (!editor) return
           relativePath = getRelativePath(editor.document.uri, folder)
+          logInfo(`Command: clearFileReview → ${relativePath}`)
+          manager.clearFileReview(relativePath, getDocumentLines(editor.document))
+          return
         }
 
         logInfo(`Command: clearFileReview → ${relativePath}`)

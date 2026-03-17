@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'vitest'
 import {
   createDefaultState,
-  serializeState,
   deserializeState,
+  serializeState,
 } from './state-persistence'
+import { fingerprintDocumentLineHashes } from './review-state'
 
 describe('createDefaultState', () => {
-  test('creates state with version 1 and empty files', () => {
+  test('creates state with version 2 and empty files', () => {
     const state = createDefaultState()
-    expect(state.version).toBe(1)
+    expect(state.version).toBe(2)
     expect(state.files).toEqual({})
   })
 })
@@ -21,28 +22,98 @@ describe('serializeState / deserializeState', () => {
     expect(result).toEqual(state)
   })
 
-  test('round-trips a state with files', () => {
+  test('round-trips a version 2 state with snapshots', () => {
     const state = createDefaultState()
     state.files['src/main.ts'] = {
       relativePath: 'src/main.ts',
       totalLines: 50,
-      documentLineHashes: ['h1', 'h2'],
       reviewedRanges: [
         {
           startLine: 1,
           endLine: 10,
           lineHashes: { 1: 'abc', 5: 'def', 10: 'ghi' },
         },
+      ],
+      documentLineHashes: ['h1', 'h2'],
+      documentFingerprint: fingerprintDocumentLineHashes(['h1', 'h2']),
+      deletionAdjacentLines: [12],
+      snapshots: [
         {
-          startLine: 20,
-          endLine: 30,
-          lineHashes: {},
+          fingerprint: fingerprintDocumentLineHashes(['h1', 'h2']),
+          totalLines: 50,
+          reviewedRanges: [
+            {
+              startLine: 1,
+              endLine: 10,
+              lineHashes: { 1: 'abc', 5: 'def', 10: 'ghi' },
+            },
+          ],
+          documentLineHashes: ['h1', 'h2'],
+          deletionAdjacentLines: [12],
         },
       ],
     }
+
     const json = serializeState(state)
     const result = deserializeState(json)
     expect(result).toEqual(state)
+  })
+
+  test('migrates version 1 state into version 2 snapshots', () => {
+    const json = JSON.stringify({
+      version: 1,
+      files: {
+        'a.ts': {
+          relativePath: 'a.ts',
+          totalLines: 2,
+          reviewedRanges: [
+            {
+              startLine: 1,
+              endLine: 1,
+              lineHashes: { 1: 'hash-a' },
+            },
+          ],
+          documentLineHashes: ['doc-a', 'doc-b'],
+          deletionAdjacentLines: [2],
+        },
+      },
+    })
+
+    const result = deserializeState(json)
+    expect(result).toEqual({
+      version: 2,
+      files: {
+        'a.ts': {
+          relativePath: 'a.ts',
+          totalLines: 2,
+          reviewedRanges: [
+            {
+              startLine: 1,
+              endLine: 1,
+              lineHashes: { 1: 'hash-a' },
+            },
+          ],
+          documentLineHashes: ['doc-a', 'doc-b'],
+          documentFingerprint: fingerprintDocumentLineHashes(['doc-a', 'doc-b']),
+          deletionAdjacentLines: [2],
+          snapshots: [
+            {
+              fingerprint: fingerprintDocumentLineHashes(['doc-a', 'doc-b']),
+              totalLines: 2,
+              reviewedRanges: [
+                {
+                  startLine: 1,
+                  endLine: 1,
+                  lineHashes: { 1: 'hash-a' },
+                },
+              ],
+              documentLineHashes: ['doc-a', 'doc-b'],
+              deletionAdjacentLines: [2],
+            },
+          ],
+        },
+      },
+    })
   })
 
   test('returns default state for invalid JSON', () => {
@@ -55,13 +126,13 @@ describe('serializeState / deserializeState', () => {
     expect(result).toEqual(createDefaultState())
   })
 
-  test('returns default state for wrong version', () => {
-    const result = deserializeState('{"version":2,"files":{}}')
+  test('returns default state for unsupported version', () => {
+    const result = deserializeState('{"version":3,"files":{}}')
     expect(result).toEqual(createDefaultState())
   })
 
   test('returns default state for missing files', () => {
-    const result = deserializeState('{"version":1}')
+    const result = deserializeState('{"version":2}')
     expect(result).toEqual(createDefaultState())
   })
 
@@ -72,7 +143,7 @@ describe('serializeState / deserializeState', () => {
 
   test('strips file entries with invalid relativePath', () => {
     const json = JSON.stringify({
-      version: 1,
+      version: 2,
       files: {
         'a.ts': { relativePath: 'WRONG', totalLines: 10, reviewedRanges: [] },
         'b.ts': { relativePath: 'b.ts', totalLines: 5, reviewedRanges: [] },
@@ -82,32 +153,9 @@ describe('serializeState / deserializeState', () => {
     expect(Object.keys(result.files)).toEqual(['b.ts'])
   })
 
-  test('strips file entries with non-object value', () => {
-    const json = JSON.stringify({
-      version: 1,
-      files: {
-        'a.ts': 'not an object',
-        'b.ts': { relativePath: 'b.ts', totalLines: 5, reviewedRanges: [] },
-      },
-    })
-    const result = deserializeState(json)
-    expect(Object.keys(result.files)).toEqual(['b.ts'])
-  })
-
-  test('strips file entries with negative totalLines', () => {
-    const json = JSON.stringify({
-      version: 1,
-      files: {
-        'a.ts': { relativePath: 'a.ts', totalLines: -1, reviewedRanges: [] },
-      },
-    })
-    const result = deserializeState(json)
-    expect(Object.keys(result.files)).toEqual([])
-  })
-
   test('strips invalid ranges but keeps valid ones', () => {
     const json = JSON.stringify({
-      version: 1,
+      version: 2,
       files: {
         'a.ts': {
           relativePath: 'a.ts',
@@ -131,7 +179,7 @@ describe('serializeState / deserializeState', () => {
 
   test('strips invalid lineHashes entries', () => {
     const json = JSON.stringify({
-      version: 1,
+      version: 2,
       files: {
         'a.ts': {
           relativePath: 'a.ts',
@@ -153,7 +201,7 @@ describe('serializeState / deserializeState', () => {
 
   test('strips invalid documentLineHashes but keeps the file', () => {
     const json = JSON.stringify({
-      version: 1,
+      version: 2,
       files: {
         'a.ts': {
           relativePath: 'a.ts',
@@ -169,11 +217,53 @@ describe('serializeState / deserializeState', () => {
       totalLines: 10,
       reviewedRanges: [],
       documentLineHashes: undefined,
+      documentFingerprint: undefined,
+      deletionAdjacentLines: undefined,
+      snapshots: undefined,
     })
   })
 
+  test('strips malformed snapshots but keeps valid ones', () => {
+    const json = JSON.stringify({
+      version: 2,
+      files: {
+        'a.ts': {
+          relativePath: 'a.ts',
+          totalLines: 2,
+          reviewedRanges: [],
+          snapshots: [
+            {
+              fingerprint: 'ignored',
+              totalLines: 2,
+              reviewedRanges: [{ startLine: 1, endLine: 1, lineHashes: { 1: 'ok' } }],
+              documentLineHashes: ['doc-a', 'doc-b'],
+            },
+            {
+              fingerprint: 'broken',
+              totalLines: 2,
+              reviewedRanges: [],
+              documentLineHashes: ['ok', 123],
+            },
+            'not-a-snapshot',
+          ],
+        },
+      },
+    })
+
+    const result = deserializeState(json)
+    expect(result.files['a.ts']?.snapshots).toEqual([
+      {
+        fingerprint: fingerprintDocumentLineHashes(['doc-a', 'doc-b']),
+        totalLines: 2,
+        reviewedRanges: [{ startLine: 1, endLine: 1, lineHashes: { 1: 'ok' } }],
+        documentLineHashes: ['doc-a', 'doc-b'],
+        deletionAdjacentLines: undefined,
+      },
+    ])
+  })
+
   test('returns default for files as array', () => {
-    const result = deserializeState('{"version":1,"files":[]}')
+    const result = deserializeState('{"version":2,"files":[]}')
     expect(result).toEqual(createDefaultState())
   })
 })

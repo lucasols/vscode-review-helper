@@ -15,6 +15,21 @@ export function hashDocumentLines(documentLines: string[]): string[] {
   return documentLines.map((line) => hashLine(line))
 }
 
+export function fingerprintDocumentLineHashes(documentLineHashes: string[]): string {
+  let hash = 5381
+
+  for (const lineHash of documentLineHashes) {
+    for (let i = 0; i < lineHash.length; i++) {
+      hash = ((hash << 5) + hash + lineHash.charCodeAt(i)) | 0
+    }
+
+    // Include a separator so sequences with different boundaries do not collide.
+    hash = ((hash << 5) + hash + 0) | 0
+  }
+
+  return (hash >>> 0).toString(36)
+}
+
 /** Sort and merge overlapping/adjacent ranges */
 export function normalizeRanges(ranges: ReviewedRange[]): ReviewedRange[] {
   if (ranges.length <= 1) return ranges

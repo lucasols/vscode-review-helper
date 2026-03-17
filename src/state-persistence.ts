@@ -1,14 +1,22 @@
-import type { FileReviewState, ReviewedRange, ReviewState } from './types'
+import type {
+  FileReviewSnapshot,
+  FileReviewState,
+  ReviewedRange,
+  ReviewState,
+} from './types'
+import { fingerprintDocumentLineHashes } from './review-state'
 import { logWarn, logError, logDebug } from './logger'
+
+type PersistedVersion = 1 | 2
 
 /** Create a default empty review state */
 export function createDefaultState(): ReviewState {
-  return { version: 1, files: {} }
+  return { version: 2, files: {} }
 }
 
 /** Serialize review state to JSON string */
 export function serializeState(state: ReviewState): string {
-  return JSON.stringify(state, null, 2)
+  return JSON.stringify({ ...state, version: 2 }, null, 2)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,6 +57,19 @@ function validateRange(value: unknown): ReviewedRange | null {
   return { startLine, endLine, lineHashes: validatedHashes }
 }
 
+function validateRanges(value: unknown): ReviewedRange[] | null {
+  if (!Array.isArray(value)) return null
+
+  const validRanges: ReviewedRange[] = []
+  for (const range of value) {
+    const validated = validateRange(range)
+    if (validated) {
+      validRanges.push(validated)
+    }
+  }
+  return validRanges
+}
+
 function validateDocumentLineHashes(value: unknown): string[] | undefined {
   if (value === undefined) return undefined
   if (!Array.isArray(value)) return undefined
@@ -74,35 +95,115 @@ function validateDeletionAdjacentLines(value: unknown): number[] | undefined {
   return lines.length > 0 ? lines : undefined
 }
 
+function validateSnapshot(value: unknown): FileReviewSnapshot | null {
+  if (!isRecord(value)) return null
+
+  const {
+    totalLines,
+    reviewedRanges,
+    documentLineHashes,
+    deletionAdjacentLines,
+  } = value
+
+  if (
+    typeof totalLines !== 'number' ||
+    !Number.isFinite(totalLines) ||
+    totalLines < 0
+  ) {
+    return null
+  }
+
+  const validRanges = validateRanges(reviewedRanges)
+  const validatedDocumentHashes = validateDocumentLineHashes(documentLineHashes)
+  if (!validRanges || !validatedDocumentHashes) {
+    return null
+  }
+
+  return {
+    fingerprint: fingerprintDocumentLineHashes(validatedDocumentHashes),
+    totalLines,
+    reviewedRanges: validRanges,
+    documentLineHashes: validatedDocumentHashes,
+    deletionAdjacentLines: validateDeletionAdjacentLines(deletionAdjacentLines),
+  }
+}
+
+function validateSnapshots(value: unknown): FileReviewSnapshot[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) return undefined
+
+  const snapshots: FileReviewSnapshot[] = []
+  const seenFingerprints = new Set<string>()
+
+  for (const entry of value) {
+    const snapshot = validateSnapshot(entry)
+    if (!snapshot || seenFingerprints.has(snapshot.fingerprint)) {
+      continue
+    }
+
+    snapshots.push(snapshot)
+    seenFingerprints.add(snapshot.fingerprint)
+  }
+
+  return snapshots.length > 0 ? snapshots : undefined
+}
+
 function validateFileState(
   key: string,
   value: unknown,
+  sourceVersion: PersistedVersion,
 ): FileReviewState | null {
   if (!isRecord(value)) return null
 
-  const { relativePath, reviewedRanges, totalLines, documentLineHashes, deletionAdjacentLines } = value
+  const {
+    relativePath,
+    reviewedRanges,
+    totalLines,
+    documentLineHashes,
+    deletionAdjacentLines,
+    snapshots,
+  } = value
+
   if (typeof relativePath !== 'string' || relativePath !== key) return null
   if (typeof totalLines !== 'number' || !Number.isFinite(totalLines) || totalLines < 0) {
     return null
   }
-  if (!Array.isArray(reviewedRanges)) return null
 
-  const validRanges: ReviewedRange[] = []
-  for (const range of reviewedRanges) {
-    const validated = validateRange(range)
-    if (validated) {
-      validRanges.push(validated)
-    }
-  }
+  const validRanges = validateRanges(reviewedRanges)
+  if (!validRanges) return null
 
   const validatedDocumentHashes = validateDocumentLineHashes(documentLineHashes)
-  const validatedDeletionAdjacentLines = validateDeletionAdjacentLines(deletionAdjacentLines)
+  const validatedDeletionAdjacentLines = validateDeletionAdjacentLines(
+    deletionAdjacentLines,
+  )
+  const documentFingerprint = validatedDocumentHashes
+    ? fingerprintDocumentLineHashes(validatedDocumentHashes)
+    : undefined
+
+  const validatedSnapshots = sourceVersion === 1
+    ? (
+        validatedDocumentHashes && documentFingerprint
+          ? [
+              {
+                fingerprint: documentFingerprint,
+                totalLines,
+                reviewedRanges: validRanges,
+                documentLineHashes: validatedDocumentHashes,
+                deletionAdjacentLines: validatedDeletionAdjacentLines,
+              },
+            ]
+          : undefined
+      )
+    : validateSnapshots(snapshots)
+
   return {
     relativePath,
     totalLines,
     reviewedRanges: validRanges,
     documentLineHashes: validatedDocumentHashes,
+    documentFingerprint,
     deletionAdjacentLines: validatedDeletionAdjacentLines,
+    snapshots: validatedSnapshots,
   }
 }
 
@@ -115,8 +216,10 @@ export function deserializeState(json: string): ReviewState {
       logWarn('Deserialization: invalid root structure')
       return createDefaultState()
     }
-    if (parsed['version'] !== 1) {
-      logWarn(`Deserialization: unsupported version ${String(parsed['version'])}`)
+
+    const version = parsed['version']
+    if (version !== 1 && version !== 2) {
+      logWarn(`Deserialization: unsupported version ${String(version)}`)
       return createDefaultState()
     }
 
@@ -129,7 +232,7 @@ export function deserializeState(json: string): ReviewState {
     const files: Record<string, FileReviewState> = {}
     let skipped = 0
     for (const [key, value] of Object.entries(filesValue)) {
-      const validated = validateFileState(key, value)
+      const validated = validateFileState(key, value, version)
       if (validated) {
         files[key] = validated
       } else {
@@ -140,9 +243,11 @@ export function deserializeState(json: string): ReviewState {
     if (skipped > 0) {
       logWarn(`Deserialization: stripped ${skipped} invalid file entry/entries`)
     }
-    logDebug(`Deserialized state: ${Object.keys(files).length} valid file(s)`)
+    logDebug(
+      `Deserialized state: ${Object.keys(files).length} valid file(s) from v${String(version)}`,
+    )
 
-    return { version: 1, files }
+    return { version: 2, files }
   } catch (err) {
     logError(`Deserialization failed: ${err instanceof Error ? err.message : String(err)}`)
     return createDefaultState()

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   hashLine,
+  fingerprintDocumentLineHashes,
   normalizeRanges,
   markLinesReviewed,
   removeReviewedLines,
@@ -21,6 +22,14 @@ describe('hashLine', () => {
 
   test('handles empty string', () => {
     expect(hashLine('')).toBe(hashLine(''))
+  })
+})
+
+describe('fingerprintDocumentLineHashes', () => {
+  test('returns different fingerprints for different ordered sequences', () => {
+    expect(fingerprintDocumentLineHashes(['a', 'b'])).not.toBe(
+      fingerprintDocumentLineHashes(['b', 'a']),
+    )
   })
 })
 
