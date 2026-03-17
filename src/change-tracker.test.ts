@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   realignRanges,
   fullReverify,
+  detectDeletionAdjacentLines,
 } from './change-tracker'
 import { hashLine } from './review-state'
 import type { ReviewedRange } from './types'
@@ -244,5 +245,127 @@ describe('fullReverify', () => {
     expect(result).toHaveLength(1)
     expect(result[0]?.startLine).toBe(8)
     expect(result[0]?.endLine).toBe(10)
+  })
+})
+
+describe('detectDeletionAdjacentLines', () => {
+  test('single line deleted in middle returns adjacent lines above and below', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Delete 'c' (line 3)
+    const newDoc = ['a', 'b', 'd', 'e']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // Line 'b' (was old line 2, now new line 2) and 'd' (was old line 4, now new line 3)
+    expect(result).toEqual([2, 3])
+  })
+
+  test('multiple consecutive lines deleted returns only boundary adjacents', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Delete 'b', 'c', 'd' (lines 2-4)
+    const newDoc = ['a', 'e']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // Line 'a' (new line 1) and 'e' (new line 2)
+    expect(result).toEqual([1, 2])
+  })
+
+  test('deletion at start of file returns only line below', () => {
+    const originalLines = ['a', 'b', 'c', 'd']
+    const ranges = [makeRange(1, 4, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Delete 'a' (line 1)
+    const newDoc = ['b', 'c', 'd']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // Only 'b' (new line 1) is adjacent
+    expect(result).toEqual([1])
+  })
+
+  test('deletion at end of file returns only line above', () => {
+    const originalLines = ['a', 'b', 'c', 'd']
+    const ranges = [makeRange(1, 4, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Delete 'd' (line 4)
+    const newDoc = ['a', 'b', 'c']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // Only 'c' (new line 3) is adjacent
+    expect(result).toEqual([3])
+  })
+
+  test('no deletions returns empty result', () => {
+    const originalLines = ['a', 'b', 'c']
+    const ranges = [makeRange(1, 3, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Same doc, no deletions
+    const newDoc = ['a', 'b', 'c']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    expect(result).toEqual([])
+  })
+
+  test('carry-forward of existing deletion-adjacent lines through document changes', () => {
+    const originalLines = ['a', 'b', 'c', 'd']
+    const ranges = [makeRange(1, 4, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // No new deletions, but line 2 was previously marked as deletion-adjacent
+    // and lines shifted: insert 'X' at start
+    const newDoc = ['X', 'a', 'b', 'c', 'd']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [2])
+
+    // Old line 2 ('b') maps to new line 3
+    expect(result).toEqual([3])
+  })
+
+  test('deletion of unreviewed lines has no effect', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    // Only lines 1-2 reviewed
+    const ranges = [makeRange(1, 2, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Delete 'd' (line 4) - not reviewed
+    const newDoc = ['a', 'b', 'c', 'e']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    expect(result).toEqual([])
+  })
+
+  test('empty ranges returns empty result', () => {
+    const previousHashes = ['a', 'b'].map((l) => hashLine(l))
+    const result = detectDeletionAdjacentLines([], previousHashes, ['a'], [])
+    expect(result).toEqual([])
+  })
+
+  test('empty previous hashes returns empty result', () => {
+    const ranges = [makeRange(1, 2, ['a', 'b'])]
+    const result = detectDeletionAdjacentLines(ranges, [], ['a'], [])
+    expect(result).toEqual([])
+  })
+
+  test('modified lines are not treated as deleted', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Lines 2,3 modified (content changed but lines still exist)
+    const newDoc = ['a', 'B', 'C', 'd', 'e']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // No lines were deleted, just modified — should not flag anything
+    expect(result).toEqual([])
+  })
+
+  test('mixed modification and deletion flags only deletion adjacents', () => {
+    const originalLines = ['a', 'b', 'c', 'd', 'e']
+    const ranges = [makeRange(1, 5, originalLines)]
+    const previousHashes = originalLines.map((l) => hashLine(l))
+    // Line 2 modified to 'B', line 3 deleted
+    const newDoc = ['a', 'B', 'd', 'e']
+    const result = detectDeletionAdjacentLines(ranges, previousHashes, newDoc, [])
+
+    // Gap between a(0→0) and d(3→2): oldGap=2, newGap=1 → 1 deletion
+    expect(result).toEqual([1, 3])
   })
 })

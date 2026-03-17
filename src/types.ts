@@ -9,6 +9,7 @@ export interface FileReviewState {
   reviewedRanges: ReviewedRange[]
   totalLines: number
   documentLineHashes?: string[] // full document snapshot from the last known file state
+  deletionAdjacentLines?: number[] // 1-based line numbers adjacent to deleted reviewed lines, shown with red gutter dot
 }
 
 export interface ReviewState {

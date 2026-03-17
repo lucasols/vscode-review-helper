@@ -61,13 +61,26 @@ function validateDocumentLineHashes(value: unknown): string[] | undefined {
   return hashes
 }
 
+function validateDeletionAdjacentLines(value: unknown): number[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) return undefined
+
+  const lines: number[] = []
+  for (const entry of value) {
+    if (typeof entry === 'number' && Number.isFinite(entry) && entry >= 1) {
+      lines.push(entry)
+    }
+  }
+  return lines.length > 0 ? lines : undefined
+}
+
 function validateFileState(
   key: string,
   value: unknown,
 ): FileReviewState | null {
   if (!isRecord(value)) return null
 
-  const { relativePath, reviewedRanges, totalLines, documentLineHashes } = value
+  const { relativePath, reviewedRanges, totalLines, documentLineHashes, deletionAdjacentLines } = value
   if (typeof relativePath !== 'string' || relativePath !== key) return null
   if (typeof totalLines !== 'number' || !Number.isFinite(totalLines) || totalLines < 0) {
     return null
@@ -83,11 +96,13 @@ function validateFileState(
   }
 
   const validatedDocumentHashes = validateDocumentLineHashes(documentLineHashes)
+  const validatedDeletionAdjacentLines = validateDeletionAdjacentLines(deletionAdjacentLines)
   return {
     relativePath,
     totalLines,
     reviewedRanges: validRanges,
     documentLineHashes: validatedDocumentHashes,
+    deletionAdjacentLines: validatedDeletionAdjacentLines,
   }
 }
 

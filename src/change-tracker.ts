@@ -1,6 +1,100 @@
 import type { ReviewedRange } from './types'
 import { hashLine, normalizeRanges } from './review-state'
 
+/**
+ * Detect lines in the new document that are adjacent to deleted reviewed lines.
+ * These lines should be shown with a red gutter dot to signal that a deletion
+ * happened nearby and the context should be re-reviewed.
+ */
+export function detectDeletionAdjacentLines(
+  ranges: ReviewedRange[],
+  previousDocumentLineHashes: string[],
+  documentLines: string[],
+  existingDeletionAdjacentLines: number[],
+): number[] {
+  if (ranges.length === 0 || previousDocumentLineHashes.length === 0) {
+    return []
+  }
+
+  const newHashes = documentLines.map((line) => hashLine(line))
+
+  const matches = patienceMatch(
+    previousDocumentLineHashes,
+    0,
+    previousDocumentLineHashes.length,
+    newHashes,
+    0,
+    newHashes.length,
+  )
+
+  // Build old→new line mapping (1-based)
+  const oldToNewLine = new Map<number, number>()
+  for (const match of matches) {
+    oldToNewLine.set(match.oldIdx + 1, match.newIdx + 1)
+  }
+
+  // Collect all reviewed old line numbers
+  const reviewedOldLines = new Set<number>()
+  const sorted = normalizeRanges(ranges)
+  for (const range of sorted) {
+    for (let line = range.startLine; line <= range.endLine; line++) {
+      reviewedOldLines.add(line)
+    }
+  }
+
+  // Analyze gaps between consecutive matches to distinguish true deletions
+  // from modifications. A gap has true deletions only when newGap < oldGap.
+  const orderedMatches = [...matches].sort((a, b) => a.oldIdx - b.oldIdx)
+  const sentinelStart: SeqMatch = { oldIdx: -1, newIdx: -1 }
+  const sentinelEnd: SeqMatch = { oldIdx: previousDocumentLineHashes.length, newIdx: newHashes.length }
+  const matchPoints = [sentinelStart, ...orderedMatches, sentinelEnd]
+
+  const adjacentNewLines = new Set<number>()
+
+  for (let i = 0; i < matchPoints.length - 1; i++) {
+    const prev = matchPoints[i]
+    const next = matchPoints[i + 1]
+    if (!prev || !next) continue
+
+    const oldGapSize = next.oldIdx - prev.oldIdx - 1
+    const newGapSize = next.newIdx - prev.newIdx - 1
+
+    if (oldGapSize <= 0) continue
+    // If new gap >= old gap, all unmatched old lines were modified, not deleted
+    if (newGapSize >= oldGapSize) continue
+
+    // Some lines were truly deleted in this gap — check if any were reviewed
+    let hasReviewedInGap = false
+    for (let oldIdx0 = prev.oldIdx + 1; oldIdx0 < next.oldIdx; oldIdx0++) {
+      if (reviewedOldLines.has(oldIdx0 + 1)) {
+        hasReviewedInGap = true
+        break
+      }
+    }
+
+    if (hasReviewedInGap) {
+      // Mark boundary match points as deletion-adjacent (in new document)
+      if (prev.oldIdx >= 0) {
+        adjacentNewLines.add(prev.newIdx + 1)
+      }
+      if (next.oldIdx < previousDocumentLineHashes.length) {
+        adjacentNewLines.add(next.newIdx + 1)
+      }
+    }
+  }
+
+  // Carry forward existing deletion-adjacent lines by re-mapping old→new positions
+  for (const oldLine of existingDeletionAdjacentLines) {
+    const newLine = oldToNewLine.get(oldLine)
+    if (newLine !== undefined) {
+      adjacentNewLines.add(newLine)
+    }
+  }
+
+  const result = [...adjacentNewLines].sort((a, b) => a - b)
+  return result
+}
+
 /** Keep only lines whose stored hashes still match the current document. */
 function reverifyHashes(
   ranges: ReviewedRange[],

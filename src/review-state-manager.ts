@@ -8,7 +8,7 @@ import {
   hashLine,
   hashDocumentLines,
 } from './review-state'
-import { fullReverify } from './change-tracker'
+import { fullReverify, detectDeletionAdjacentLines } from './change-tracker'
 import {
   createDefaultState,
   deserializeState,
@@ -149,12 +149,24 @@ export class ReviewStateManager {
       this.state.files[relativePath] = fileState
     }
 
-    this.state.files[relativePath] = markLinesReviewed(
+    const updated = markLinesReviewed(
       fileState,
       startLine,
       endLine,
       documentLines,
     )
+
+    // Filter out deletion-adjacent lines that fall within the reviewed range
+    if (updated.deletionAdjacentLines && updated.deletionAdjacentLines.length > 0) {
+      updated.deletionAdjacentLines = updated.deletionAdjacentLines.filter(
+        (line) => line < startLine || line > endLine,
+      )
+      if (updated.deletionAdjacentLines.length === 0) {
+        updated.deletionAdjacentLines = undefined
+      }
+    }
+
+    this.state.files[relativePath] = updated
     logInfo(`Marked reviewed: ${relativePath} lines ${startLine}-${endLine}`)
     this._onDidChange.fire()
     this.scheduleSave()
@@ -203,6 +215,7 @@ export class ReviewStateManager {
         },
       ]),
       documentLineHashes: hashDocumentLines(documentLines),
+      deletionAdjacentLines: undefined,
     }
     logInfo(`Marked entire file reviewed: ${relativePath} (${documentLines.length} lines)`)
     this._onDidChange.fire()
@@ -216,6 +229,7 @@ export class ReviewStateManager {
     this.state.files[relativePath] = {
       ...fileState,
       reviewedRanges: [],
+      deletionAdjacentLines: undefined,
     }
     logInfo(`Cleared review: ${relativePath}`)
     this._onDidChange.fire()
@@ -253,11 +267,36 @@ export class ReviewStateManager {
       fileState.documentLineHashes,
     )
 
+    let deletionAdjacentLines: number[] | undefined
+    if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
+      const detected = detectDeletionAdjacentLines(
+        fileState.reviewedRanges,
+        fileState.documentLineHashes,
+        documentLines,
+        fileState.deletionAdjacentLines ?? [],
+      )
+      deletionAdjacentLines = detected.length > 0 ? detected : undefined
+    }
+
+    // Remove deletion-adjacent lines from reviewed ranges
+    let finalRanges = reverified
+    if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
+      let state: FileReviewState = {
+        ...fileState,
+        reviewedRanges: finalRanges,
+      }
+      for (const line of deletionAdjacentLines) {
+        state = removeReviewedLines(state, line, line)
+      }
+      finalRanges = state.reviewedRanges
+    }
+
     this.state.files[relativePath] = {
       ...fileState,
       totalLines,
-      reviewedRanges: reverified,
+      reviewedRanges: finalRanges,
       documentLineHashes: hashDocumentLines(documentLines),
+      deletionAdjacentLines,
     }
     this._onDidChange.fire()
     this.scheduleSave()
@@ -291,11 +330,36 @@ export class ReviewStateManager {
           logDebug(`Recheck ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
         }
 
+        let deletionAdjacentLines: number[] | undefined
+        if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
+          const detected = detectDeletionAdjacentLines(
+            fileState.reviewedRanges,
+            fileState.documentLineHashes,
+            documentLines,
+            fileState.deletionAdjacentLines ?? [],
+          )
+          deletionAdjacentLines = detected.length > 0 ? detected : undefined
+        }
+
+        // Remove deletion-adjacent lines from reviewed ranges
+        let finalRanges = reverified
+        if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
+          let state: FileReviewState = {
+            ...fileState,
+            reviewedRanges: finalRanges,
+          }
+          for (const line of deletionAdjacentLines) {
+            state = removeReviewedLines(state, line, line)
+          }
+          finalRanges = state.reviewedRanges
+        }
+
         this.state.files[relativePath] = {
           ...fileState,
           totalLines: documentLines.length,
-          reviewedRanges: reverified,
+          reviewedRanges: finalRanges,
           documentLineHashes: hashDocumentLines(documentLines),
+          deletionAdjacentLines,
         }
         changed = true
         checkedCount++
@@ -329,11 +393,36 @@ export class ReviewStateManager {
       logInfo(`Reverify ${relativePath}: ranges ${rangesBefore} → ${rangesAfter}`)
     }
 
+    let deletionAdjacentLines: number[] | undefined
+    if (fileState.documentLineHashes && fileState.documentLineHashes.length > 0) {
+      const detected = detectDeletionAdjacentLines(
+        fileState.reviewedRanges,
+        fileState.documentLineHashes,
+        documentLines,
+        fileState.deletionAdjacentLines ?? [],
+      )
+      deletionAdjacentLines = detected.length > 0 ? detected : undefined
+    }
+
+    // Remove deletion-adjacent lines from reviewed ranges
+    let finalRanges = reverified
+    if (deletionAdjacentLines && deletionAdjacentLines.length > 0) {
+      let state: FileReviewState = {
+        ...fileState,
+        reviewedRanges: finalRanges,
+      }
+      for (const line of deletionAdjacentLines) {
+        state = removeReviewedLines(state, line, line)
+      }
+      finalRanges = state.reviewedRanges
+    }
+
     this.state.files[relativePath] = {
       ...fileState,
       totalLines: documentLines.length,
-      reviewedRanges: reverified,
+      reviewedRanges: finalRanges,
       documentLineHashes: hashDocumentLines(documentLines),
+      deletionAdjacentLines,
     }
     this._onDidChange.fire()
     this.scheduleSave()

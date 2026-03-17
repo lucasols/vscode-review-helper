@@ -105,9 +105,15 @@ describe('ReviewStateManager.handleDocumentChange', () => {
       updatedLines,
     )
 
+    // Line 13 is now deletion-adjacent (old reviewed line 11 'test?: string' was deleted)
+    // so it is removed from reviewed ranges and marked for re-review
     expect(getReviewedLines(manager, relativePath)).toEqual(
-      new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15]),
+      new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15]),
     )
+
+    const fileState = manager.getFileState(relativePath)
+    // Old line 10 ('permissions') maps to new line 12, old line 12 ('role') maps to new line 13
+    expect(fileState?.deletionAdjacentLines).toEqual([12, 13])
 
     manager.dispose()
   })

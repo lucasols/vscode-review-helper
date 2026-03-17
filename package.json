@@ -185,6 +185,18 @@
           "maximum": 1,
           "description": "Opacity of the gutter dot indicator (0 = transparent, 1 = opaque)."
         },
+        "reviewHelper.colors.deletionGutterDotHex": {
+          "type": "string",
+          "default": "#F44336",
+          "description": "Hex color of the gutter dot indicator for lines adjacent to deleted reviewed code."
+        },
+        "reviewHelper.colors.deletionGutterDotAlpha": {
+          "type": "number",
+          "default": 0.85,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Opacity of the deletion gutter dot indicator (0 = transparent, 1 = opaque)."
+        },
         "reviewHelper.colors.backgroundHex": {
           "type": "string",
           "default": "#00BCD4",

@@ -37,21 +37,24 @@ export function activate(context: vscode.ExtensionContext): void {
   // Mutable decoration references (updated on config change)
   let bgDecoration: vscode.TextEditorDecorationType | undefined
   let gutterDecoration: vscode.TextEditorDecorationType | undefined
+  let deletionGutterDecoration: vscode.TextEditorDecorationType | undefined
 
   function updateAllEditors(): void {
-    if (!bgDecoration || !gutterDecoration) return
+    if (!bgDecoration || !gutterDecoration || !deletionGutterDecoration) return
     for (const editor of vscode.window.visibleTextEditors) {
-      updateDecorations(editor, manager, bgDecoration, gutterDecoration)
+      updateDecorations(editor, manager, bgDecoration, gutterDecoration, deletionGutterDecoration)
     }
   }
 
   async function initDecorations(): Promise<void> {
     bgDecoration?.dispose()
     gutterDecoration?.dispose()
+    deletionGutterDecoration?.dispose()
 
     const decorations = await createDecorationTypes(context)
     bgDecoration = decorations.bgDecoration
     gutterDecoration = decorations.gutterDecoration
+    deletionGutterDecoration = decorations.deletionGutterDecoration
 
     updateAllEditors()
   }
@@ -145,8 +148,8 @@ export function activate(context: vscode.ExtensionContext): void {
         manager.handleFileOpened(relativePath, lines)
       }
 
-      if (bgDecoration && gutterDecoration) {
-        updateDecorations(editor, manager, bgDecoration, gutterDecoration)
+      if (bgDecoration && gutterDecoration && deletionGutterDecoration) {
+        updateDecorations(editor, manager, bgDecoration, gutterDecoration, deletionGutterDecoration)
       }
     }),
   )
