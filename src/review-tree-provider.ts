@@ -33,7 +33,7 @@ export class ReviewTreeItem extends vscode.TreeItem {
           'pass-filled',
           new vscode.ThemeColor('testing.iconPassed'),
         )
-      } else if (tier === 'half') {
+      } else if (tier === 'high') {
         this.iconPath = new vscode.ThemeIcon(
           'circle-large-filled',
           new vscode.ThemeColor('testing.iconQueued'),
