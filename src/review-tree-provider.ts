@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
 import { computeFileProgress } from './review-state'
+import { getProgressTier } from './progress-tiers'
 
 export class ReviewTreeItem extends vscode.TreeItem {
   readonly relativePath: string
@@ -24,17 +25,25 @@ export class ReviewTreeItem extends vscode.TreeItem {
       : ''
 
     if (fileExists) {
+      const tier = getProgressTier(progress)
       this.tooltip = `${relativePath} - ${String(percentage)}% reviewed`
-      this.iconPath =
-        progress >= 1
-          ? new vscode.ThemeIcon(
-              'pass-filled',
-              new vscode.ThemeColor('testing.iconPassed'),
-            )
-          : new vscode.ThemeIcon(
-              'circle-large-outline',
-              new vscode.ThemeColor('testing.iconQueued'),
-            )
+
+      if (tier === 'complete') {
+        this.iconPath = new vscode.ThemeIcon(
+          'pass-filled',
+          new vscode.ThemeColor('testing.iconPassed'),
+        )
+      } else if (tier === 'half') {
+        this.iconPath = new vscode.ThemeIcon(
+          'circle-large-filled',
+          new vscode.ThemeColor('testing.iconQueued'),
+        )
+      } else {
+        this.iconPath = new vscode.ThemeIcon(
+          'circle-large-outline',
+          new vscode.ThemeColor('testing.iconQueued'),
+        )
+      }
       this.command = {
         command: 'vscode.open',
         title: 'Open File',

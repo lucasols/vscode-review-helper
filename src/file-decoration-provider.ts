@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import type { ReviewStateManager } from './review-state-manager'
 import { computeFileProgress } from './review-state'
+import { type ProgressTier, getProgressTier } from './progress-tiers'
 
 export class ReviewFileDecorationProvider
   implements vscode.FileDecorationProvider
@@ -30,8 +31,9 @@ export class ReviewFileDecorationProvider
 
     const progress = computeFileProgress(fileState)
     const percentage = Math.round(progress * 100)
+    const tier = getProgressTier(progress)
 
-    if (progress >= 1) {
+    if (tier === 'complete') {
       return new vscode.FileDecoration(
         '\u2713',
         `Reviewed (${String(percentage)}%)`,
@@ -39,8 +41,15 @@ export class ReviewFileDecorationProvider
       )
     }
 
+    const badgeByTier: Record<Exclude<ProgressTier, 'complete'>, string> = {
+      half: '\u25D5',
+      quarter: '\u25D1',
+      low: '\u25D4',
+      zero: '\u25CB',
+    }
+
     return new vscode.FileDecoration(
-      '\u25CB',
+      badgeByTier[tier],
       `Review progress: ${String(percentage)}%`,
       new vscode.ThemeColor('testing.iconQueued'),
     )
