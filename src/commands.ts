@@ -52,7 +52,7 @@ export function registerCommands(
 
     vscode.commands.registerCommand(
       'reviewHelper.removeFile',
-      (item?: { relativePath?: string }) => {
+      async (item?: { relativePath?: string }) => {
         const folder = getActiveWorkspaceFolder()
         if (!folder) return
 
@@ -62,6 +62,13 @@ export function registerCommands(
           if (!editor) return
           relativePath = getRelativePath(editor.document.uri, folder)
         }
+
+        const confirm = await vscode.window.showWarningMessage(
+          `Remove "${relativePath}" from review?`,
+          { modal: true },
+          'Remove',
+        )
+        if (confirm !== 'Remove') return
 
         logInfo(`Command: removeFile → ${relativePath}`)
         manager.removeFile(relativePath)
@@ -169,6 +176,7 @@ export function registerCommands(
     vscode.commands.registerCommand('reviewHelper.recheckAll', async () => {
       logInfo('Command: recheckAll')
       await manager.recheckAllFiles()
+      vscode.window.showInformationMessage('Recheck complete')
     }),
   )
 }

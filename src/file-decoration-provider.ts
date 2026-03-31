@@ -42,9 +42,9 @@ export class ReviewFileDecorationProvider
     }
 
     const badgeByTier: Record<Exclude<ProgressTier, 'complete'>, string> = {
-      high: '\u2593',
-      medium: '\u2592',
-      low: '\u2591',
+      high: '\u2261',
+      medium: '=',
+      low: '-',
     }
 
     return new vscode.FileDecoration(
