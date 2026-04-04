@@ -98,6 +98,18 @@
         "title": "Recheck All Files",
         "category": "Review Helper",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "reviewHelper.undo",
+        "title": "Undo Last Review Action",
+        "category": "Review Helper",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "reviewHelper.redo",
+        "title": "Redo Last Review Action",
+        "category": "Review Helper",
+        "icon": "$(redo)"
       }
     ],
     "viewsContainers": {

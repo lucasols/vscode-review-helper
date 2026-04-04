@@ -24,7 +24,15 @@ import { logDebug, logError, logInfo, logWarn } from './logger'
 
 const REVIEW_STATE_FILE = '.vscode/review-state.json'
 const SAVE_DEBOUNCE_MS = 500
-const MAX_SNAPSHOTS_PER_FILE = 20
+const MAX_SNAPSHOTS_PER_FILE = 5
+const MAX_UNDO_STACK = 50
+const UNDO_TTL_MS = 5 * 60 * 1000
+
+interface UndoEntry {
+  /** Previous state of each affected file (null = file didn't exist) */
+  files: Map<string, FileReviewState | null>
+  timestamp: number
+}
 
 interface DocumentIdentity {
   totalLines: number
@@ -38,6 +46,8 @@ export class ReviewStateManager {
   private isSaving = false
   private readonly _onDidChange = new vscode.EventEmitter<void>()
   readonly onDidChange = this._onDidChange.event
+  private undoStack: UndoEntry[] = []
+  private redoStack: UndoEntry[] = []
 
   async load(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, REVIEW_STATE_FILE)
@@ -110,6 +120,65 @@ export class ReviewStateManager {
 
   getTrackedFiles(): string[] {
     return Object.keys(this.state.files)
+  }
+
+  saveUndoSnapshot(affectedPaths: string[]): void {
+    this.pruneExpiredEntries()
+    const entry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    for (const path of affectedPaths) {
+      const current = this.state.files[path]
+      entry.files.set(path, current ? structuredClone(current) : null)
+    }
+    this.undoStack.push(entry)
+    if (this.undoStack.length > MAX_UNDO_STACK) {
+      this.undoStack.shift()
+    }
+    this.redoStack = []
+  }
+
+  undo(): boolean {
+    this.pruneExpiredEntries()
+    const entry = this.undoStack.pop()
+    if (!entry) return false
+
+    const redoEntry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    for (const [path, previousState] of entry.files) {
+      const currentState = this.state.files[path]
+      redoEntry.files.set(path, currentState ? structuredClone(currentState) : null)
+
+      if (previousState === null) {
+        delete this.state.files[path]
+      } else {
+        this.state.files[path] = previousState
+      }
+    }
+
+    this.redoStack.push(redoEntry)
+    logInfo('Undo review state change')
+    this.fireDidChange()
+    return true
+  }
+
+  redo(): boolean {
+    const entry = this.redoStack.pop()
+    if (!entry) return false
+
+    const undoEntry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    for (const [path, nextState] of entry.files) {
+      const currentState = this.state.files[path]
+      undoEntry.files.set(path, currentState ? structuredClone(currentState) : null)
+
+      if (nextState === null) {
+        delete this.state.files[path]
+      } else {
+        this.state.files[path] = nextState
+      }
+    }
+
+    this.undoStack.push(undoEntry)
+    logInfo('Redo review state change')
+    this.fireDidChange()
+    return true
   }
 
   addFile(relativePath: string, totalLines: number): void {
@@ -347,6 +416,16 @@ export class ReviewStateManager {
 
     this.state.files[relativePath] = resolved
     this.fireDidChange()
+  }
+
+  private pruneExpiredEntries(): void {
+    const cutoff = Date.now() - UNDO_TTL_MS
+    while (this.undoStack[0] && this.undoStack[0].timestamp < cutoff) {
+      this.undoStack.shift()
+    }
+    while (this.redoStack[0] && this.redoStack[0].timestamp < cutoff) {
+      this.redoStack.shift()
+    }
   }
 
   private fireDidChange(): void {

@@ -214,11 +214,11 @@ describe('ReviewStateManager.handleDocumentChange', () => {
     manager.dispose()
   })
 
-  test('prunes snapshot history to the active fingerprint plus the newest 19 others', () => {
+  test('prunes snapshot history to the active fingerprint plus the newest 4 others', () => {
     const manager = new ReviewStateManager()
     const relativePath = 'history.ts'
 
-    for (let version = 0; version <= 20; version++) {
+    for (let version = 0; version <= 5; version++) {
       manager.markSelectionReviewed(relativePath, 1, 1, [`line-${String(version)}`])
     }
 
@@ -228,7 +228,7 @@ describe('ReviewStateManager.handleDocumentChange', () => {
       hashDocumentLines(['line-0']),
     )
 
-    expect(snapshots).toHaveLength(20)
+    expect(snapshots).toHaveLength(5)
     expect(snapshots[0]?.fingerprint).toBe(fileState?.documentFingerprint)
     expect(snapshots.some((entry) => entry.fingerprint === oldestPrunedFingerprint)).toBe(false)
 

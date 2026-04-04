@@ -42,6 +42,7 @@ export function registerCommands(
         const relativePath = getRelativePath(targetUri, folder)
         logInfo(`Command: addFile → ${relativePath}`)
         const document = await vscode.workspace.openTextDocument(targetUri)
+        manager.saveUndoSnapshot([relativePath])
         manager.addFile(relativePath, document.lineCount)
 
         vscode.window.showInformationMessage(
@@ -71,6 +72,7 @@ export function registerCommands(
         if (confirm !== 'Remove') return
 
         logInfo(`Command: removeFile → ${relativePath}`)
+        manager.saveUndoSnapshot([relativePath])
         manager.removeFile(relativePath)
         vscode.window.showInformationMessage(
           `Removed "${relativePath}" from review`,
@@ -92,6 +94,7 @@ export function registerCommands(
       const documentLines = getDocumentLines(editor.document)
 
       logInfo(`Command: markReviewed → ${relativePath} lines ${startLine}-${endLine}`)
+      manager.saveUndoSnapshot([relativePath])
       manager.markSelectionReviewed(
         relativePath,
         startLine,
@@ -114,6 +117,7 @@ export function registerCommands(
       const documentLines = getDocumentLines(editor.document)
 
       logInfo(`Command: markUnreviewed → ${relativePath} lines ${startLine}-${endLine}`)
+      manager.saveUndoSnapshot([relativePath])
       if (!manager.getFileState(relativePath)) {
         manager.markFileReviewed(relativePath, documentLines)
       }
@@ -142,6 +146,7 @@ export function registerCommands(
         }
 
         logInfo(`Command: markFileReviewed → ${relativePath}`)
+        manager.saveUndoSnapshot([relativePath])
         manager.markFileReviewed(relativePath, documentLines)
       },
     ),
@@ -158,17 +163,20 @@ export function registerCommands(
           if (!editor) return
           relativePath = getRelativePath(editor.document.uri, folder)
           logInfo(`Command: clearFileReview → ${relativePath}`)
+          manager.saveUndoSnapshot([relativePath])
           manager.clearFileReview(relativePath, getDocumentLines(editor.document))
           return
         }
 
         logInfo(`Command: clearFileReview → ${relativePath}`)
+        manager.saveUndoSnapshot([relativePath])
         manager.clearFileReview(relativePath)
       },
     ),
 
     vscode.commands.registerCommand('reviewHelper.clearAllReviews', () => {
       logInfo('Command: clearAllReviews')
+      manager.saveUndoSnapshot(manager.getTrackedFiles())
       manager.clearAll()
       vscode.window.showInformationMessage('Cleared all review state')
     }),
@@ -177,6 +185,20 @@ export function registerCommands(
       logInfo('Command: recheckAll')
       await manager.recheckAllFiles()
       vscode.window.showInformationMessage('Recheck complete')
+    }),
+
+    vscode.commands.registerCommand('reviewHelper.undo', () => {
+      logInfo('Command: undo')
+      if (!manager.undo()) {
+        vscode.window.showInformationMessage('Nothing to undo')
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewHelper.redo', () => {
+      logInfo('Command: redo')
+      if (!manager.redo()) {
+        vscode.window.showInformationMessage('Nothing to redo')
+      }
     }),
   )
 }
