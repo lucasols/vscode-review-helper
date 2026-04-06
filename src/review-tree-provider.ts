@@ -40,12 +40,12 @@ export class ReviewTreeItem extends vscode.TreeItem {
         )
       } else if (tier === 'medium') {
         this.iconPath = new vscode.ThemeIcon(
-          'circle-large-outline',
+          'record',
           new vscode.ThemeColor('testing.iconQueued'),
         )
       } else {
         this.iconPath = new vscode.ThemeIcon(
-          'record-small',
+          'circle-large-outline',
           new vscode.ThemeColor('testing.iconQueued'),
         )
       }
