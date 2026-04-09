@@ -110,6 +110,12 @@
         "title": "Redo Last Review Action",
         "category": "Review Helper",
         "icon": "$(redo)"
+      },
+      {
+        "command": "reviewHelper.addUncommittedChanges",
+        "title": "Add Uncommitted Changes to Review",
+        "category": "Review Helper",
+        "icon": "$(git-compare)"
       }
     ],
     "viewsContainers": {
@@ -156,6 +162,11 @@
       "view/title": [
         {
           "command": "reviewHelper.recheckAll",
+          "when": "view == reviewHelper.files",
+          "group": "navigation"
+        },
+        {
+          "command": "reviewHelper.addUncommittedChanges",
           "when": "view == reviewHelper.files",
           "group": "navigation"
         },
@@ -232,6 +243,11 @@
           "minimum": 0,
           "maximum": 1,
           "description": "Opacity of the overview ruler marker (0 = transparent, 1 = opaque)."
+        },
+        "reviewHelper.ignoreImportChanges": {
+          "type": "boolean",
+          "default": false,
+          "description": "When adding uncommitted changes, automatically mark import-only line changes as reviewed (.ts, .tsx, .js, .jsx files)."
         }
       }
     }
