@@ -212,6 +212,118 @@ export function registerCommands(
 
     vscode.commands.registerCommand(
       'reviewHelper.addUncommittedChanges',
+      async (uri?: vscode.Uri) => {
+        const folder = getActiveWorkspaceFolder()
+        if (!folder) return
+
+        const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri
+        if (!targetUri) {
+          logWarn('addUncommittedChanges: no file selected')
+          vscode.window.showWarningMessage('No file selected')
+          return
+        }
+
+        const relativePath = getRelativePath(targetUri, folder)
+        const cwd = folder.uri.fsPath
+
+        let diffOutput: string
+        let isUntracked = false
+
+        try {
+          const diffResult = await execFileAsync(
+            'git',
+            ['diff', 'HEAD', '--unified=0', '--', relativePath],
+            { cwd, maxBuffer: 10 * 1024 * 1024 },
+          ).catch(async (err: unknown) => {
+            if (
+              err instanceof Error
+              && err.message.includes('unknown revision')
+            ) {
+              return execFileAsync(
+                'git',
+                ['diff', '--cached', '--unified=0', '--', relativePath],
+                { cwd, maxBuffer: 10 * 1024 * 1024 },
+              )
+            }
+            throw err
+          })
+
+          diffOutput = diffResult.stdout
+
+          // Check if the file is untracked (no diff output and not in HEAD)
+          if (!diffOutput.trim()) {
+            const lsResult = await execFileAsync(
+              'git',
+              ['ls-files', '--others', '--exclude-standard', '--', relativePath],
+              { cwd },
+            )
+            isUntracked = lsResult.stdout.trim().length > 0
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          logError(`Failed to run git: ${message}`)
+          vscode.window.showWarningMessage(
+            'Failed to get uncommitted changes. Is this a git repository?',
+          )
+          return
+        }
+
+        const document = await vscode.workspace.openTextDocument(targetUri)
+        const documentLines = getDocumentLines(document)
+
+        let changedRanges: Array<{ startLine: number; endLine: number }>
+
+        if (isUntracked) {
+          changedRanges = [{ startLine: 1, endLine: document.lineCount }]
+        } else {
+          const fileChanges = parseGitDiff(diffOutput)
+          const fileChange = fileChanges.find(
+            (fc) => fc.relativePath === relativePath,
+          )
+
+          if (!fileChange) {
+            vscode.window.showInformationMessage(
+              `No uncommitted changes in "${relativePath}"`,
+            )
+            return
+          }
+
+          changedRanges = fileChange.changedRanges
+        }
+
+        const ignoreImports = vscode.workspace
+          .getConfiguration('reviewHelper')
+          .get<boolean>('ignoreImportChanges', false)
+
+        if (ignoreImports && isTypeScriptFile(relativePath)) {
+          changedRanges = filterImportOnlyRanges(changedRanges, documentLines)
+        }
+
+        logInfo(`Command: addUncommittedChanges → ${relativePath}`)
+        manager.saveUndoSnapshot([relativePath])
+
+        const isTracked = manager.getFileState(relativePath) !== undefined
+        if (!isTracked) {
+          manager.markFileReviewed(relativePath, documentLines)
+        }
+
+        for (const range of changedRanges) {
+          manager.markSelectionUnreviewed(
+            relativePath,
+            range.startLine,
+            range.endLine,
+            documentLines,
+          )
+        }
+
+        vscode.window.showInformationMessage(
+          `Added uncommitted changes in "${relativePath}" to review`,
+        )
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'reviewHelper.addAllUncommittedChanges',
       async () => {
         const folder = getActiveWorkspaceFolder()
         if (!folder) return
@@ -226,7 +338,6 @@ export function registerCommands(
               cwd,
               maxBuffer: 10 * 1024 * 1024,
             }).catch(async (err: unknown) => {
-              // No HEAD commit (fresh repo) — fall back to staged diff
               if (
                 err instanceof Error
                 && err.message.includes('unknown revision')
@@ -259,19 +370,17 @@ export function registerCommands(
 
         const fileChanges = parseGitDiff(diffOutput)
 
-        // Add untracked files as full-file changes
         const untrackedFiles = untrackedOutput
           .split('\n')
           .map((line) => line.trim())
           .filter((line) => line.length > 0)
 
         for (const filePath of untrackedFiles) {
-          // Skip if already in diff output
           if (fileChanges.some((fc) => fc.relativePath === filePath)) continue
 
           try {
-            const uri = vscode.Uri.joinPath(folder.uri, filePath)
-            const doc = await vscode.workspace.openTextDocument(uri)
+            const fileUri = vscode.Uri.joinPath(folder.uri, filePath)
+            const doc = await vscode.workspace.openTextDocument(fileUri)
             if (doc.lineCount > 0) {
               fileChanges.push({
                 relativePath: filePath,
@@ -292,7 +401,7 @@ export function registerCommands(
           .getConfiguration('reviewHelper')
           .get<boolean>('ignoreImportChanges', false)
 
-        logInfo(`Command: addUncommittedChanges → ${fileChanges.length} file(s)`)
+        logInfo(`Command: addAllUncommittedChanges → ${fileChanges.length} file(s)`)
 
         const affectedPaths = fileChanges.map((fc) => fc.relativePath)
         manager.saveUndoSnapshot(affectedPaths)
@@ -300,20 +409,16 @@ export function registerCommands(
         let addedCount = 0
         for (const fileChange of fileChanges) {
           try {
-            const uri = vscode.Uri.joinPath(folder.uri, fileChange.relativePath)
-            const doc = await vscode.workspace.openTextDocument(uri)
+            const fileUri = vscode.Uri.joinPath(folder.uri, fileChange.relativePath)
+            const doc = await vscode.workspace.openTextDocument(fileUri)
             const documentLines = getDocumentLines(doc)
 
             let changedRanges = fileChange.changedRanges
-            if (
-              ignoreImports
-              && isTypeScriptFile(fileChange.relativePath)
-            ) {
+            if (ignoreImports && isTypeScriptFile(fileChange.relativePath)) {
               changedRanges = filterImportOnlyRanges(changedRanges, documentLines)
             }
 
             const isTracked = manager.getFileState(fileChange.relativePath) !== undefined
-
             if (!isTracked) {
               manager.markFileReviewed(fileChange.relativePath, documentLines)
             }

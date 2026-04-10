@@ -116,6 +116,12 @@
         "title": "Add Uncommitted Changes to Review",
         "category": "Review Helper",
         "icon": "$(git-compare)"
+      },
+      {
+        "command": "reviewHelper.addAllUncommittedChanges",
+        "title": "Add All Uncommitted Changes to Review",
+        "category": "Review Helper",
+        "icon": "$(git-compare)"
       }
     ],
     "viewsContainers": {
@@ -166,7 +172,7 @@
           "group": "navigation"
         },
         {
-          "command": "reviewHelper.addUncommittedChanges",
+          "command": "reviewHelper.addAllUncommittedChanges",
           "when": "view == reviewHelper.files",
           "group": "navigation"
         },
