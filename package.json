@@ -118,10 +118,22 @@
         "icon": "$(git-compare)"
       },
       {
-        "command": "reviewHelper.addAllUncommittedChanges",
-        "title": "Add All Uncommitted Changes to Review",
+        "command": "reviewHelper.addMultipleUncommittedChanges",
+        "title": "Add Multiple Uncommitted Changes to Review",
         "category": "Review Helper",
         "icon": "$(git-compare)"
+      },
+      {
+        "command": "reviewHelper.addPRChanges",
+        "title": "Add PR Changes to Review",
+        "category": "Review Helper",
+        "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "reviewHelper.addMultiplePRChanges",
+        "title": "Add Multiple PR Changes to Review",
+        "category": "Review Helper",
+        "icon": "$(git-pull-request)"
       }
     ],
     "viewsContainers": {
@@ -172,7 +184,12 @@
           "group": "navigation"
         },
         {
-          "command": "reviewHelper.addAllUncommittedChanges",
+          "command": "reviewHelper.addMultipleUncommittedChanges",
+          "when": "view == reviewHelper.files",
+          "group": "navigation"
+        },
+        {
+          "command": "reviewHelper.addMultiplePRChanges",
           "when": "view == reviewHelper.files",
           "group": "navigation"
         },
