@@ -6,6 +6,12 @@ export interface ChangedLineRange {
 export interface FileChange {
   relativePath: string
   changedRanges: ChangedLineRange[]
+  /**
+   * 1-based line numbers in the new file adjacent to pure-deletion hunks.
+   * For a hunk `@@ -X,Y +Z,0 @@` (Y > 0): the deletion happened after line Z
+   * in the new file. Adjacent lines are Z (if >= 1) and Z + 1.
+   */
+  deletionAdjacentLines: number[]
 }
 
 /** Parse a unified diff hunk header to extract new-file line range */
@@ -31,16 +37,28 @@ export function parseGitDiff(diffOutput: string): FileChange[] {
 
   let currentPath: string | undefined
   let currentRanges: ChangedLineRange[] = []
+  let currentDeletionLines: number[] = []
+
+  const flushCurrent = () => {
+    if (
+      currentPath !== undefined
+      && (currentRanges.length > 0 || currentDeletionLines.length > 0)
+    ) {
+      files.push({
+        relativePath: currentPath,
+        changedRanges: currentRanges,
+        deletionAdjacentLines: dedupeSorted(currentDeletionLines),
+      })
+    }
+  }
 
   for (const line of lines) {
     // New file section
     if (line.startsWith('diff --git ')) {
-      // Flush previous file
-      if (currentPath !== undefined && currentRanges.length > 0) {
-        files.push({ relativePath: currentPath, changedRanges: currentRanges })
-      }
+      flushCurrent()
       currentPath = undefined
       currentRanges = []
+      currentDeletionLines = []
       continue
     }
 
@@ -60,21 +78,30 @@ export function parseGitDiff(diffOutput: string): FileChange[] {
     // Parse hunk headers
     if (line.startsWith('@@') && currentPath !== undefined) {
       const hunk = parseHunkHeader(line)
-      if (hunk && hunk.newCount > 0) {
+      if (!hunk) continue
+
+      if (hunk.newCount > 0) {
         currentRanges.push({
           startLine: hunk.newStart,
           endLine: hunk.newStart + hunk.newCount - 1,
         })
+      } else {
+        // Pure deletion: mark lines adjacent in the new file
+        if (hunk.newStart >= 1) {
+          currentDeletionLines.push(hunk.newStart)
+        }
+        currentDeletionLines.push(hunk.newStart + 1)
       }
     }
   }
 
-  // Flush last file
-  if (currentPath !== undefined && currentRanges.length > 0) {
-    files.push({ relativePath: currentPath, changedRanges: currentRanges })
-  }
+  flushCurrent()
 
   return files
+}
+
+function dedupeSorted(lines: number[]): number[] {
+  return Array.from(new Set(lines)).sort((a, b) => a - b)
 }
 
 /**

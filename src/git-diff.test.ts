@@ -61,6 +61,7 @@ describe('parseGitDiff', () => {
       {
         relativePath: 'src/foo.ts',
         changedRanges: [{ startLine: 1, endLine: 5 }],
+        deletionAdjacentLines: [],
       },
     ])
   })
@@ -83,6 +84,7 @@ describe('parseGitDiff', () => {
           { startLine: 11, endLine: 11 },
           { startLine: 22, endLine: 26 },
         ],
+        deletionAdjacentLines: [],
       },
     ])
   })
@@ -103,10 +105,12 @@ describe('parseGitDiff', () => {
       {
         relativePath: 'a.ts',
         changedRanges: [{ startLine: 1, endLine: 2 }],
+        deletionAdjacentLines: [],
       },
       {
         relativePath: 'b.ts',
         changedRanges: [{ startLine: 5, endLine: 8 }],
+        deletionAdjacentLines: [],
       },
     ])
   })
@@ -124,6 +128,7 @@ describe('parseGitDiff', () => {
       {
         relativePath: 'new.ts',
         changedRanges: [{ startLine: 1, endLine: 10 }],
+        deletionAdjacentLines: [],
       },
     ])
   })
@@ -140,7 +145,7 @@ describe('parseGitDiff', () => {
     expect(parseGitDiff(diff)).toEqual([])
   })
 
-  test('skips hunks with zero new count (pure deletion hunks)', () => {
+  test('pure-deletion hunk emits adjacent lines', () => {
     const diff = [
       'diff --git a/foo.ts b/foo.ts',
       '--- a/foo.ts',
@@ -153,6 +158,42 @@ describe('parseGitDiff', () => {
       {
         relativePath: 'foo.ts',
         changedRanges: [{ startLine: 8, endLine: 11 }],
+        deletionAdjacentLines: [5, 6],
+      },
+    ])
+  })
+
+  test('pure-deletion at file start emits only line 1', () => {
+    const diff = [
+      'diff --git a/foo.ts b/foo.ts',
+      '--- a/foo.ts',
+      '+++ b/foo.ts',
+      '@@ -1,2 +0,0 @@',
+    ].join('\n')
+
+    expect(parseGitDiff(diff)).toEqual([
+      {
+        relativePath: 'foo.ts',
+        changedRanges: [],
+        deletionAdjacentLines: [1],
+      },
+    ])
+  })
+
+  test('multiple deletion hunks dedupe adjacent lines', () => {
+    const diff = [
+      'diff --git a/foo.ts b/foo.ts',
+      '--- a/foo.ts',
+      '+++ b/foo.ts',
+      '@@ -10,1 +10,0 @@',
+      '@@ -15,2 +14,0 @@',
+    ].join('\n')
+
+    expect(parseGitDiff(diff)).toEqual([
+      {
+        relativePath: 'foo.ts',
+        changedRanges: [],
+        deletionAdjacentLines: [10, 11, 14, 15],
       },
     ])
   })
@@ -172,6 +213,7 @@ describe('parseGitDiff', () => {
       {
         relativePath: 'new-name.ts',
         changedRanges: [{ startLine: 1, endLine: 3 }],
+        deletionAdjacentLines: [],
       },
     ])
   })

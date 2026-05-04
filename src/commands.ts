@@ -156,6 +156,7 @@ async function getUncommittedFileChanges(
         fileChanges.push({
           relativePath: filePath,
           changedRanges: [{ startLine: 1, endLine: doc.lineCount }],
+          deletionAdjacentLines: [],
         })
       }
     } catch {
@@ -240,6 +241,14 @@ async function addFileChangesToReview(
           fileChange.relativePath,
           range.startLine,
           range.endLine,
+          documentLines,
+        )
+      }
+
+      if (fileChange.deletionAdjacentLines.length > 0) {
+        manager.markDeletionAdjacentLines(
+          fileChange.relativePath,
+          fileChange.deletionAdjacentLines,
           documentLines,
         )
       }
@@ -496,6 +505,7 @@ export function registerCommands(
         const documentLines = getDocumentLines(document)
 
         let changedRanges: Array<{ startLine: number; endLine: number }>
+        let deletionAdjacentLines: number[] = []
 
         if (isUntracked) {
           changedRanges = [{ startLine: 1, endLine: document.lineCount }]
@@ -513,6 +523,7 @@ export function registerCommands(
           }
 
           changedRanges = fileChange.changedRanges
+          deletionAdjacentLines = fileChange.deletionAdjacentLines
         }
 
         const ignoreImports = vscode.workspace
@@ -536,6 +547,14 @@ export function registerCommands(
             relativePath,
             range.startLine,
             range.endLine,
+            documentLines,
+          )
+        }
+
+        if (deletionAdjacentLines.length > 0) {
+          manager.markDeletionAdjacentLines(
+            relativePath,
+            deletionAdjacentLines,
             documentLines,
           )
         }
@@ -637,6 +656,14 @@ export function registerCommands(
             relativePath,
             range.startLine,
             range.endLine,
+            documentLines,
+          )
+        }
+
+        if (fileChange.deletionAdjacentLines.length > 0) {
+          manager.markDeletionAdjacentLines(
+            relativePath,
+            fileChange.deletionAdjacentLines,
             documentLines,
           )
         }

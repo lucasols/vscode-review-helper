@@ -274,6 +274,42 @@ export class ReviewStateManager {
     this.fireDidChange()
   }
 
+  markDeletionAdjacentLines(
+    relativePath: string,
+    lines: number[],
+    documentLines: string[],
+  ): void {
+    const fileState = this.state.files[relativePath]
+    if (!fileState) return
+
+    const validLines = lines.filter(
+      (line) => line >= 1 && line <= documentLines.length,
+    )
+    if (validLines.length === 0) return
+
+    let updated: FileReviewState = fileState
+    for (const line of validLines) {
+      updated = removeReviewedLines(updated, line, line)
+    }
+
+    const existing = fileState.deletionAdjacentLines ?? []
+    const merged = Array.from(new Set([...existing, ...validLines])).sort(
+      (a, b) => a - b,
+    )
+
+    updated = { ...updated, deletionAdjacentLines: merged }
+
+    this.state.files[relativePath] = this.syncSnapshots(
+      fileState,
+      this.hydrateDocumentIdentity(updated, documentLines),
+      { manualMutation: true },
+    )
+    logInfo(
+      `Marked deletion-adjacent: ${relativePath} lines ${validLines.join(',')}`,
+    )
+    this.fireDidChange()
+  }
+
   markFileReviewed(relativePath: string, documentLines: string[]): void {
     const fileState = this.state.files[relativePath]
       ?? createEmptyFileState(relativePath, documentLines.length)
