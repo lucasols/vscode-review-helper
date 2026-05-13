@@ -22,7 +22,12 @@ export interface FileReviewState {
   snapshots?: FileReviewSnapshot[] // newest-first retained snapshots keyed by fingerprint
 }
 
-export interface ReviewState {
-  version: 2
+export interface BranchReviewScope {
   files: Record<string, FileReviewState> // keyed by relativePath
+  lastAccessedAt: number // unix ms timestamp; used to expire stale branch scopes
+}
+
+export interface ReviewState {
+  version: 3
+  branches: Record<string, BranchReviewScope> // keyed by branch name
 }

@@ -100,11 +100,11 @@ export class ReviewTreeProvider
   }
 
   async getChildren(): Promise<ReviewTreeItem[]> {
-    const state = this.manager.getState()
+    const files = this.manager.getActiveFiles()
     const folder = vscode.workspace.workspaceFolders?.[0]
     const items: ReviewTreeItem[] = []
 
-    for (const [relativePath, fileState] of Object.entries(state.files)) {
+    for (const [relativePath, fileState] of Object.entries(files)) {
       const progress = computeFileProgress(fileState)
       let fileExists = true
       if (folder) {

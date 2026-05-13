@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ReviewStateManager } from './review-state-manager'
 import { fingerprintDocumentLineHashes, hashDocumentLines } from './review-state'
 
@@ -255,6 +255,177 @@ describe('ReviewStateManager.handleDocumentChange', () => {
     expect(after?.documentFingerprint).not.toBe(before?.documentFingerprint)
     expect(after?.snapshots).toHaveLength(1)
     expect(after?.snapshots?.[0]?.fingerprint).toBe(before?.documentFingerprint)
+
+    manager.dispose()
+  })
+})
+
+describe('ReviewStateManager branch scoping', () => {
+  test('keeps separate file state per branch', () => {
+    const manager = new ReviewStateManager()
+    const file = 'src/main.ts'
+
+    manager.setCurrentBranch('feature/a')
+    manager.markSelectionReviewed(file, 1, 3, ['a', 'b', 'c'])
+    expect(getReviewedLines(manager, file)).toEqual(new Set([1, 2, 3]))
+
+    manager.setCurrentBranch('feature/b')
+    expect(manager.getFileState(file)).toBeUndefined()
+    expect(getReviewedLines(manager, file)).toEqual(new Set())
+
+    manager.markSelectionReviewed(file, 1, 1, ['x'])
+    expect(getReviewedLines(manager, file)).toEqual(new Set([1]))
+
+    manager.setCurrentBranch('feature/a')
+    expect(getReviewedLines(manager, file)).toEqual(new Set([1, 2, 3]))
+
+    manager.dispose()
+  })
+
+  test('clearAll only clears the active branch', () => {
+    const manager = new ReviewStateManager()
+    const file = 'a.ts'
+
+    manager.setCurrentBranch('main')
+    manager.markSelectionReviewed(file, 1, 1, ['a'])
+
+    manager.setCurrentBranch('dev')
+    manager.markSelectionReviewed(file, 1, 1, ['a'])
+
+    manager.clearAll()
+    expect(manager.getTrackedFiles()).toEqual([])
+
+    manager.setCurrentBranch('main')
+    expect(manager.getTrackedFiles()).toEqual([file])
+
+    manager.dispose()
+  })
+
+  test('switching to the same branch is a no-op', () => {
+    const manager = new ReviewStateManager()
+    let events = 0
+    const sub = manager.onDidChange(() => {
+      events++
+    })
+
+    manager.setCurrentBranch('main')
+    manager.setCurrentBranch('main')
+    expect(events).toBe(1)
+
+    sub.dispose()
+    manager.dispose()
+  })
+
+  test('clears undo/redo history on branch switch', () => {
+    const manager = new ReviewStateManager()
+    const file = 'a.ts'
+
+    manager.setCurrentBranch('main')
+    manager.saveUndoSnapshot([file])
+    manager.markSelectionReviewed(file, 1, 1, ['a'])
+
+    manager.setCurrentBranch('dev')
+    expect(manager.undo()).toBe(false)
+
+    manager.setCurrentBranch('main')
+    expect(manager.undo()).toBe(false)
+    // The mark is still there — undo history was just discarded on switch.
+    expect(manager.getFileState(file)).toBeDefined()
+
+    manager.dispose()
+  })
+
+  test('serialized state preserves both branches', () => {
+    const manager = new ReviewStateManager()
+
+    manager.setCurrentBranch('main')
+    manager.markSelectionReviewed('a.ts', 1, 1, ['a'])
+
+    manager.setCurrentBranch('feature/x')
+    manager.markSelectionReviewed('b.ts', 1, 1, ['b'])
+
+    const state = manager.getState()
+    expect(state.version).toBe(3)
+    expect(Object.keys(state.branches).sort()).toEqual(['feature/x', 'main'])
+    expect(Object.keys(state.branches['main']?.files ?? {})).toEqual(['a.ts'])
+    expect(Object.keys(state.branches['feature/x']?.files ?? {})).toEqual(['b.ts'])
+
+    manager.dispose()
+  })
+})
+
+describe('ReviewStateManager branch expiration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('prunes branches not accessed within 7 days when switching away', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const manager = new ReviewStateManager()
+
+    manager.setCurrentBranch('stale')
+    manager.markSelectionReviewed('a.ts', 1, 1, ['a'])
+
+    // Jump 8 days into the future, then switch branches — pruning runs and
+    // removes "stale" because it has not been touched within the window.
+    vi.setSystemTime(new Date('2026-01-09T00:00:00Z'))
+    manager.setCurrentBranch('fresh')
+
+    const state = manager.getState()
+    expect(Object.keys(state.branches)).toEqual(['fresh'])
+
+    manager.dispose()
+  })
+
+  test('keeps branches that were accessed within the expiration window', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const manager = new ReviewStateManager()
+
+    manager.setCurrentBranch('recent')
+    manager.markSelectionReviewed('a.ts', 1, 1, ['a'])
+
+    // Only 6 days later — recent branch should survive.
+    vi.setSystemTime(new Date('2026-01-07T00:00:00Z'))
+    manager.setCurrentBranch('other')
+
+    const state = manager.getState()
+    expect(Object.keys(state.branches).sort()).toEqual(['other', 'recent'])
+
+    manager.dispose()
+  })
+
+  test('does not prune the currently active branch', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const manager = new ReviewStateManager()
+
+    manager.setCurrentBranch('only')
+    manager.markSelectionReviewed('a.ts', 1, 1, ['a'])
+
+    vi.setSystemTime(new Date('2026-12-01T00:00:00Z'))
+    manager.setCurrentBranch('only')
+
+    expect(manager.getTrackedFiles()).toEqual(['a.ts'])
+
+    manager.dispose()
+  })
+
+  test('switching back to a stale branch creates a fresh empty scope', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const manager = new ReviewStateManager()
+
+    manager.setCurrentBranch('A')
+    manager.markSelectionReviewed('a.ts', 1, 1, ['a'])
+
+    vi.setSystemTime(new Date('2026-01-15T00:00:00Z'))
+    manager.setCurrentBranch('B')
+
+    // A was pruned; switching back gives an empty scope.
+    manager.setCurrentBranch('A')
+    expect(manager.getTrackedFiles()).toEqual([])
 
     manager.dispose()
   })

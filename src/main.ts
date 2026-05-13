@@ -5,11 +5,12 @@ import { createDecorationTypes, updateDecorations } from './decorations'
 import { ReviewTreeProvider } from './review-tree-provider'
 import { ReviewFileDecorationProvider } from './file-decoration-provider'
 import { ReviewStatusBar } from './status-bar'
-import { initLogger, logInfo } from './logger'
+import { initLogger, logInfo, logWarn } from './logger'
 import {
   findAbsolutePathEntries,
   notifyAbsolutePathEntries,
 } from './absolute-path-detector'
+import { getCurrentBranch, resolveGitHeadUri } from './git-branch'
 
 export function activate(context: vscode.ExtensionContext): void {
   const channel = initLogger()
@@ -18,11 +19,52 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const manager = new ReviewStateManager()
 
-  // Load persisted state (non-blocking - UI updates via onDidChange when ready)
   const folder = vscode.workspace.workspaceFolders?.[0]
   if (folder) {
     logInfo(`Loading state from workspace: ${folder.uri.fsPath}`)
-    void manager.load(folder)
+    void (async () => {
+      const branch = await getCurrentBranch(folder.uri.fsPath)
+      logInfo(`Detected current branch: "${branch}"`)
+      await manager.load(folder, branch)
+      void watchBranchChanges(folder)
+    })()
+  }
+
+  async function watchBranchChanges(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+    const headUri = await resolveGitHeadUri(workspaceFolder)
+    if (!headUri) {
+      logWarn('Not a git workspace — branch scoping disabled, using default branch')
+      return
+    }
+
+    const onHeadChanged = async () => {
+      const branch = await getCurrentBranch(workspaceFolder.uri.fsPath)
+      if (branch !== manager.getCurrentBranch()) {
+        manager.setCurrentBranch(branch)
+      }
+    }
+
+    const headWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(workspaceFolder, '.git/HEAD'),
+    )
+    headWatcher.onDidChange(onHeadChanged)
+    headWatcher.onDidCreate(onHeadChanged)
+    context.subscriptions.push(headWatcher)
+
+    // The `.git/HEAD` we care about may live outside the workspace (worktree).
+    // Watch that path too if it differs from the workspace-relative one.
+    const workspaceHeadFsPath = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      '.git/HEAD',
+    ).fsPath
+    if (headUri.fsPath !== workspaceHeadFsPath) {
+      const externalWatcher = vscode.workspace.createFileSystemWatcher(
+        headUri.fsPath,
+      )
+      externalWatcher.onDidChange(onHeadChanged)
+      externalWatcher.onDidCreate(onHeadChanged)
+      context.subscriptions.push(externalWatcher)
+    }
   }
 
   // Watch for external changes to review-state.json
@@ -120,7 +162,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const wsFolder = vscode.workspace.workspaceFolders?.[0]
       if (!wsFolder) return
       const entries = findAbsolutePathEntries(
-        manager.getState(),
+        manager.getActiveFiles(),
         wsFolder.uri.fsPath,
       )
       if (entries.length > 0) {

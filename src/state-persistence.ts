@@ -1,4 +1,5 @@
 import type {
+  BranchReviewScope,
   FileReviewSnapshot,
   FileReviewState,
   ReviewedRange,
@@ -7,16 +8,19 @@ import type {
 import { fingerprintDocumentLineHashes } from './review-state'
 import { logWarn, logError, logDebug } from './logger'
 
-type PersistedVersion = 1 | 2
+/** Sentinel branch key used when no git branch is detected. */
+export const DEFAULT_BRANCH_KEY = '__default__'
+
+type PersistedVersion = 1 | 2 | 3
 
 /** Create a default empty review state */
 export function createDefaultState(): ReviewState {
-  return { version: 2, files: {} }
+  return { version: 3, branches: {} }
 }
 
 /** Serialize review state to JSON string */
 export function serializeState(state: ReviewState): string {
-  return JSON.stringify({ ...state, version: 2 }, null, 2)
+  return JSON.stringify({ ...state, version: 3 }, null, 2)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,8 +211,51 @@ function validateFileState(
   }
 }
 
-/** Deserialize JSON string to review state. Invalid entries are stripped. */
-export function deserializeState(json: string): ReviewState {
+function validateFilesMap(
+  value: unknown,
+  sourceVersion: PersistedVersion,
+): { files: Record<string, FileReviewState>; skipped: number } | null {
+  if (!isRecord(value)) return null
+
+  const files: Record<string, FileReviewState> = {}
+  let skipped = 0
+  for (const [key, entry] of Object.entries(value)) {
+    const validated = validateFileState(key, entry, sourceVersion)
+    if (validated) {
+      files[key] = validated
+    } else {
+      skipped++
+    }
+  }
+  return { files, skipped }
+}
+
+function validateBranchScope(
+  value: unknown,
+): BranchReviewScope | null {
+  if (!isRecord(value)) return null
+
+  const filesResult = validateFilesMap(value['files'], 3)
+  if (!filesResult) return null
+
+  const rawLastAccessed = value['lastAccessedAt']
+  const lastAccessedAt =
+    typeof rawLastAccessed === 'number' && Number.isFinite(rawLastAccessed) && rawLastAccessed >= 0
+      ? rawLastAccessed
+      : Date.now()
+
+  return { files: filesResult.files, lastAccessedAt }
+}
+
+/**
+ * Deserialize JSON string to review state. Invalid entries are stripped.
+ * Legacy v1/v2 states (flat `files`) are migrated into a single branch
+ * scope keyed by `migrationBranch`.
+ */
+export function deserializeState(
+  json: string,
+  migrationBranch: string = DEFAULT_BRANCH_KEY,
+): ReviewState {
   try {
     const parsed: unknown = JSON.parse(json)
 
@@ -218,36 +265,70 @@ export function deserializeState(json: string): ReviewState {
     }
 
     const version = parsed['version']
-    if (version !== 1 && version !== 2) {
+    if (version !== 1 && version !== 2 && version !== 3) {
       logWarn(`Deserialization: unsupported version ${String(version)}`)
       return createDefaultState()
     }
 
+    if (version === 3) {
+      const branchesValue = parsed['branches']
+      if (!isRecord(branchesValue)) {
+        logWarn('Deserialization: invalid branches structure')
+        return createDefaultState()
+      }
+
+      const branches: Record<string, BranchReviewScope> = {}
+      let skippedBranches = 0
+      for (const [branchKey, branchValue] of Object.entries(branchesValue)) {
+        const scope = validateBranchScope(branchValue)
+        if (scope) {
+          branches[branchKey] = scope
+        } else {
+          skippedBranches++
+        }
+      }
+
+      if (skippedBranches > 0) {
+        logWarn(`Deserialization: stripped ${skippedBranches} invalid branch entry/entries`)
+      }
+
+      const branchCount = Object.keys(branches).length
+      const fileCount = Object.values(branches).reduce(
+        (acc, scope) => acc + Object.keys(scope.files).length,
+        0,
+      )
+      logDebug(
+        `Deserialized state: v3, ${branchCount} branch(es), ${fileCount} file(s)`,
+      )
+
+      return { version: 3, branches }
+    }
+
     const filesValue = parsed['files']
-    if (!isRecord(filesValue)) {
+    const legacyResult = validateFilesMap(filesValue, version)
+    if (!legacyResult) {
       logWarn('Deserialization: invalid files structure')
       return createDefaultState()
     }
 
-    const files: Record<string, FileReviewState> = {}
-    let skipped = 0
-    for (const [key, value] of Object.entries(filesValue)) {
-      const validated = validateFileState(key, value, version)
-      if (validated) {
-        files[key] = validated
-      } else {
-        skipped++
-      }
+    if (legacyResult.skipped > 0) {
+      logWarn(`Deserialization: stripped ${legacyResult.skipped} invalid file entry/entries`)
     }
 
-    if (skipped > 0) {
-      logWarn(`Deserialization: stripped ${skipped} invalid file entry/entries`)
-    }
+    const fileCount = Object.keys(legacyResult.files).length
     logDebug(
-      `Deserialized state: ${Object.keys(files).length} valid file(s) from v${String(version)}`,
+      `Deserialized state: migrated v${String(version)} → v3, ${fileCount} file(s) into branch "${migrationBranch}"`,
     )
 
-    return { version: 2, files }
+    return {
+      version: 3,
+      branches: {
+        [migrationBranch]: {
+          files: legacyResult.files,
+          lastAccessedAt: Date.now(),
+        },
+      },
+    }
   } catch (err) {
     logError(`Deserialization failed: ${err instanceof Error ? err.message : String(err)}`)
     return createDefaultState()

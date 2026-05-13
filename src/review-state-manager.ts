@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import type {
+  BranchReviewScope,
   FileReviewSnapshot,
   FileReviewState,
   ReviewedRange,
@@ -16,6 +17,7 @@ import {
 } from './review-state'
 import { detectDeletionAdjacentLines, fullReverify } from './change-tracker'
 import {
+  DEFAULT_BRANCH_KEY,
   createDefaultState,
   deserializeState,
   serializeState,
@@ -27,8 +29,12 @@ const SAVE_DEBOUNCE_MS = 500
 const MAX_SNAPSHOTS_PER_FILE = 5
 const MAX_UNDO_STACK = 50
 const UNDO_TTL_MS = 5 * 60 * 1000
+/** Branch scopes not accessed within this window are deleted on load / branch switch. */
+const BRANCH_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
 
 interface UndoEntry {
+  /** Branch this entry belongs to */
+  branch: string
   /** Previous state of each affected file (null = file didn't exist) */
   files: Map<string, FileReviewState | null>
   timestamp: number
@@ -42,6 +48,7 @@ interface DocumentIdentity {
 
 export class ReviewStateManager {
   private state: ReviewState = createDefaultState()
+  private currentBranch: string = DEFAULT_BRANCH_KEY
   private saveTimeout: ReturnType<typeof setTimeout> | undefined
   private isSaving = false
   private readonly _onDidChange = new vscode.EventEmitter<void>()
@@ -49,18 +56,54 @@ export class ReviewStateManager {
   private undoStack: UndoEntry[] = []
   private redoStack: UndoEntry[] = []
 
-  async load(workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+  async load(
+    workspaceFolder: vscode.WorkspaceFolder,
+    currentBranch: string = DEFAULT_BRANCH_KEY,
+  ): Promise<void> {
+    this.currentBranch = currentBranch
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, REVIEW_STATE_FILE)
     try {
       const data = await vscode.workspace.fs.readFile(uri)
-      this.state = deserializeState(new TextDecoder().decode(data))
-      const fileCount = Object.keys(this.state.files).length
-      logInfo(`State loaded: ${fileCount} tracked file(s) from ${REVIEW_STATE_FILE}`)
+      this.state = deserializeState(new TextDecoder().decode(data), currentBranch)
+      const branchCount = Object.keys(this.state.branches).length
+      const scope = this.state.branches[currentBranch]
+      const fileCount = scope ? Object.keys(scope.files).length : 0
+      logInfo(
+        `State loaded: branch "${currentBranch}" with ${fileCount} tracked file(s); ${branchCount} branch scope(s) total`,
+      )
     } catch {
       this.state = createDefaultState()
       logInfo('No existing state file found, starting fresh')
     }
+    this.pruneExpiredBranches()
+    this.touchCurrentScope()
+    this.scheduleSave()
     this._onDidChange.fire()
+  }
+
+  /**
+   * Switch the active branch. Stale branch scopes are pruned; the new scope
+   * (created if missing) gets its `lastAccessedAt` updated.
+   */
+  setCurrentBranch(branch: string): void {
+    if (branch === this.currentBranch) return
+
+    const previous = this.currentBranch
+    this.currentBranch = branch
+    this.pruneExpiredBranches()
+    this.touchCurrentScope()
+    this.undoStack = []
+    this.redoStack = []
+    const scope = this.state.branches[branch]
+    const fileCount = scope ? Object.keys(scope.files).length : 0
+    logInfo(
+      `Branch switched: "${previous}" → "${branch}" (${fileCount} tracked file(s))`,
+    )
+    this.fireDidChange()
+  }
+
+  getCurrentBranch(): string {
+    return this.currentBranch
   }
 
   private getWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
@@ -107,26 +150,36 @@ export class ReviewStateManager {
     if (!folder) return
 
     logInfo('Reloading state from disk (external change detected)')
-    await this.load(folder)
+    await this.load(folder, this.currentBranch)
   }
 
   getState(): ReviewState {
     return this.state
   }
 
+  /** Files for the active branch only. */
+  getActiveFiles(): Record<string, FileReviewState> {
+    return this.getCurrentScope().files
+  }
+
   getFileState(relativePath: string): FileReviewState | undefined {
-    return this.state.files[relativePath]
+    return this.getCurrentScope().files[relativePath]
   }
 
   getTrackedFiles(): string[] {
-    return Object.keys(this.state.files)
+    return Object.keys(this.getCurrentScope().files)
   }
 
   saveUndoSnapshot(affectedPaths: string[]): void {
     this.pruneExpiredEntries()
-    const entry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    const files = this.getCurrentScope().files
+    const entry: UndoEntry = {
+      branch: this.currentBranch,
+      files: new Map(),
+      timestamp: Date.now(),
+    }
     for (const path of affectedPaths) {
-      const current = this.state.files[path]
+      const current = files[path]
       entry.files.set(path, current ? structuredClone(current) : null)
     }
     this.undoStack.push(entry)
@@ -140,16 +193,25 @@ export class ReviewStateManager {
     this.pruneExpiredEntries()
     const entry = this.undoStack.pop()
     if (!entry) return false
+    if (entry.branch !== this.currentBranch) {
+      logDebug('Undo skipped: entry belongs to a different branch')
+      return false
+    }
 
-    const redoEntry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    const files = this.getCurrentScope().files
+    const redoEntry: UndoEntry = {
+      branch: this.currentBranch,
+      files: new Map(),
+      timestamp: Date.now(),
+    }
     for (const [path, previousState] of entry.files) {
-      const currentState = this.state.files[path]
+      const currentState = files[path]
       redoEntry.files.set(path, currentState ? structuredClone(currentState) : null)
 
       if (previousState === null) {
-        delete this.state.files[path]
+        delete files[path]
       } else {
-        this.state.files[path] = previousState
+        files[path] = previousState
       }
     }
 
@@ -162,16 +224,25 @@ export class ReviewStateManager {
   redo(): boolean {
     const entry = this.redoStack.pop()
     if (!entry) return false
+    if (entry.branch !== this.currentBranch) {
+      logDebug('Redo skipped: entry belongs to a different branch')
+      return false
+    }
 
-    const undoEntry: UndoEntry = { files: new Map(), timestamp: Date.now() }
+    const files = this.getCurrentScope().files
+    const undoEntry: UndoEntry = {
+      branch: this.currentBranch,
+      files: new Map(),
+      timestamp: Date.now(),
+    }
     for (const [path, nextState] of entry.files) {
-      const currentState = this.state.files[path]
+      const currentState = files[path]
       undoEntry.files.set(path, currentState ? structuredClone(currentState) : null)
 
       if (nextState === null) {
-        delete this.state.files[path]
+        delete files[path]
       } else {
-        this.state.files[path] = nextState
+        files[path] = nextState
       }
     }
 
@@ -182,33 +253,33 @@ export class ReviewStateManager {
   }
 
   addFile(relativePath: string, totalLines: number): void {
-    if (this.state.files[relativePath]) {
+    const files = this.getCurrentScope().files
+    if (files[relativePath]) {
       logDebug(`File already tracked: ${relativePath}`)
       return
     }
 
-    this.state.files[relativePath] = createEmptyFileState(
-      relativePath,
-      totalLines,
-    )
+    files[relativePath] = createEmptyFileState(relativePath, totalLines)
     logInfo(`File added: ${relativePath} (${totalLines} lines)`)
     this.fireDidChange()
   }
 
   removeFile(relativePath: string): void {
-    if (!this.state.files[relativePath]) return
+    const files = this.getCurrentScope().files
+    if (!files[relativePath]) return
 
-    delete this.state.files[relativePath]
+    delete files[relativePath]
     logInfo(`File removed: ${relativePath}`)
     this.fireDidChange()
   }
 
   renameFile(oldPath: string, newPath: string): void {
-    const fileState = this.state.files[oldPath]
+    const files = this.getCurrentScope().files
+    const fileState = files[oldPath]
     if (!fileState) return
 
-    delete this.state.files[oldPath]
-    this.state.files[newPath] = {
+    delete files[oldPath]
+    files[newPath] = {
       ...fileState,
       relativePath: newPath,
     }
@@ -222,7 +293,8 @@ export class ReviewStateManager {
     endLine: number,
     documentLines: string[],
   ): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
       ?? createEmptyFileState(relativePath, documentLines.length)
 
     const updated = markLinesReviewed(
@@ -241,7 +313,7 @@ export class ReviewStateManager {
       }
     }
 
-    this.state.files[relativePath] = this.syncSnapshots(
+    files[relativePath] = this.syncSnapshots(
       fileState,
       this.hydrateDocumentIdentity(updated, documentLines),
       { manualMutation: true },
@@ -256,7 +328,8 @@ export class ReviewStateManager {
     endLine: number,
     documentLines?: string[],
   ): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
     if (!fileState) return
 
     const updated = removeReviewedLines(
@@ -265,7 +338,7 @@ export class ReviewStateManager {
       endLine,
     )
 
-    this.state.files[relativePath] = this.syncSnapshots(
+    files[relativePath] = this.syncSnapshots(
       fileState,
       this.hydrateDocumentIdentity(updated, documentLines),
       { manualMutation: true },
@@ -279,7 +352,8 @@ export class ReviewStateManager {
     lines: number[],
     documentLines: string[],
   ): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
     if (!fileState) return
 
     const validLines = lines.filter(
@@ -299,7 +373,7 @@ export class ReviewStateManager {
 
     updated = { ...updated, deletionAdjacentLines: merged }
 
-    this.state.files[relativePath] = this.syncSnapshots(
+    files[relativePath] = this.syncSnapshots(
       fileState,
       this.hydrateDocumentIdentity(updated, documentLines),
       { manualMutation: true },
@@ -311,7 +385,8 @@ export class ReviewStateManager {
   }
 
   markFileReviewed(relativePath: string, documentLines: string[]): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
       ?? createEmptyFileState(relativePath, documentLines.length)
 
     const lineHashes: Record<number, string> = {}
@@ -322,7 +397,7 @@ export class ReviewStateManager {
       }
     }
 
-    this.state.files[relativePath] = this.syncSnapshots(
+    files[relativePath] = this.syncSnapshots(
       fileState,
       this.hydrateDocumentIdentity(
         {
@@ -346,10 +421,11 @@ export class ReviewStateManager {
   }
 
   clearFileReview(relativePath: string, documentLines?: string[]): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
     if (!fileState) return
 
-    this.state.files[relativePath] = this.syncSnapshots(
+    files[relativePath] = this.syncSnapshots(
       fileState,
       this.hydrateDocumentIdentity(
         {
@@ -365,9 +441,12 @@ export class ReviewStateManager {
     this.fireDidChange()
   }
 
+  /** Clear all reviews on the active branch. Other branches are untouched. */
   clearAll(): void {
-    this.state = createDefaultState()
-    logInfo('Cleared all review state')
+    const scope = this.getCurrentScope()
+    scope.files = {}
+    scope.lastAccessedAt = Date.now()
+    logInfo(`Cleared review state for branch "${this.currentBranch}"`)
     this.fireDidChange()
   }
 
@@ -383,7 +462,8 @@ export class ReviewStateManager {
     totalLines: number,
     documentLines: string[],
   ): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
     if (!fileState || !this.hasVersionedState(fileState)) return
 
     logDebug(`Document change: ${relativePath} (${changes.length} change(s), totalLines=${totalLines})`)
@@ -395,7 +475,7 @@ export class ReviewStateManager {
     )
     if (this.sameFileState(fileState, resolved)) return
 
-    this.state.files[relativePath] = resolved
+    files[relativePath] = resolved
     this.fireDidChange()
   }
 
@@ -406,7 +486,8 @@ export class ReviewStateManager {
     logInfo('Rechecking all tracked files')
     let changed = false
     let checkedCount = 0
-    for (const [relativePath, fileState] of Object.entries(this.state.files)) {
+    const files = this.getCurrentScope().files
+    for (const [relativePath, fileState] of Object.entries(files)) {
       if (!this.hasVersionedState(fileState)) continue
 
       const uri = vscode.Uri.joinPath(folder.uri, relativePath)
@@ -422,7 +503,7 @@ export class ReviewStateManager {
         )
 
         if (!this.sameFileState(fileState, resolved)) {
-          this.state.files[relativePath] = resolved
+          files[relativePath] = resolved
           changed = true
         }
         checkedCount++
@@ -438,7 +519,8 @@ export class ReviewStateManager {
   }
 
   handleFileOpened(relativePath: string, documentLines: string[]): void {
-    const fileState = this.state.files[relativePath]
+    const files = this.getCurrentScope().files
+    const fileState = files[relativePath]
     if (!fileState || !this.hasVersionedState(fileState)) return
 
     logDebug(`File opened, reverifying: ${relativePath}`)
@@ -450,7 +532,7 @@ export class ReviewStateManager {
 
     if (this.sameFileState(fileState, resolved)) return
 
-    this.state.files[relativePath] = resolved
+    files[relativePath] = resolved
     this.fireDidChange()
   }
 
@@ -464,7 +546,36 @@ export class ReviewStateManager {
     }
   }
 
+  private pruneExpiredBranches(): void {
+    const cutoff = Date.now() - BRANCH_EXPIRATION_MS
+    let pruned = 0
+    for (const [branch, scope] of Object.entries(this.state.branches)) {
+      if (branch === this.currentBranch) continue
+      if (scope.lastAccessedAt < cutoff) {
+        delete this.state.branches[branch]
+        pruned++
+      }
+    }
+    if (pruned > 0) {
+      logInfo(`Pruned ${pruned} expired branch scope(s)`)
+    }
+  }
+
+  private getCurrentScope(): BranchReviewScope {
+    let scope = this.state.branches[this.currentBranch]
+    if (!scope) {
+      scope = { files: {}, lastAccessedAt: Date.now() }
+      this.state.branches[this.currentBranch] = scope
+    }
+    return scope
+  }
+
+  private touchCurrentScope(): void {
+    this.getCurrentScope().lastAccessedAt = Date.now()
+  }
+
   private fireDidChange(): void {
+    this.touchCurrentScope()
     this._onDidChange.fire()
     this.scheduleSave()
   }

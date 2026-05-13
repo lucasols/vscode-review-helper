@@ -27,8 +27,8 @@ export class ReviewStatusBar {
 
   private update(): void {
     const editor = vscode.window.activeTextEditor
-    const state = this.manager.getState()
-    const fileCount = Object.keys(state.files).length
+    const files = this.manager.getActiveFiles()
+    const fileCount = Object.keys(files).length
 
     if (fileCount === 0) {
       this.statusBarItem.hide()
@@ -52,7 +52,7 @@ export class ReviewStatusBar {
             computeFileProgress(fileState, fileState.reviewedRanges, documentLines) * 100,
           )
           const total = Math.floor(
-            computeTotalProgress(state.files) * 100,
+            computeTotalProgress(files) * 100,
           )
           this.statusBarItem.text = `$(checklist) Review: ${String(progress)}% | Total: ${String(total)}%`
           this.statusBarItem.tooltip = `${relativePath}: ${String(progress)}% reviewed\nTotal: ${String(total)}% across ${String(fileCount)} files`
@@ -62,7 +62,7 @@ export class ReviewStatusBar {
       }
     }
 
-    const total = Math.floor(computeTotalProgress(state.files) * 100)
+    const total = Math.floor(computeTotalProgress(files) * 100)
     this.statusBarItem.text = `$(checklist) Review: ${String(total)}%`
     this.statusBarItem.tooltip = `Total: ${String(total)}% across ${String(fileCount)} files`
     this.statusBarItem.show()

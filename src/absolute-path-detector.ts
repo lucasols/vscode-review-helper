@@ -1,6 +1,6 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
-import type { ReviewState } from './types'
+import type { FileReviewState } from './types'
 import type { ReviewStateManager } from './review-state-manager'
 import { logInfo, logWarn } from './logger'
 
@@ -11,13 +11,13 @@ export interface AbsolutePathEntry {
 }
 
 export function findAbsolutePathEntries(
-  state: ReviewState,
+  files: Record<string, FileReviewState>,
   workspaceFolderFsPath: string,
 ): AbsolutePathEntry[] {
   const entries: AbsolutePathEntry[] = []
   const normalizedWorkspace = path.normalize(workspaceFolderFsPath)
 
-  for (const key of Object.keys(state.files)) {
+  for (const key of Object.keys(files)) {
     if (!path.isAbsolute(key)) continue
 
     const normalizedKey = path.normalize(key)
@@ -30,7 +30,7 @@ export function findAbsolutePathEntries(
       computedRelativePath = path
         .relative(normalizedWorkspace, normalizedKey)
         .replace(/\\/g, '/')
-      isRelativeAlreadyTracked = computedRelativePath in state.files
+      isRelativeAlreadyTracked = computedRelativePath in files
     }
 
     entries.push({ absolutePath: key, computedRelativePath, isRelativeAlreadyTracked })
