@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import * as vscode from 'vscode'
 import { ReviewStateManager } from './review-state-manager'
 import { fingerprintDocumentLineHashes, hashDocumentLines } from './review-state'
 
@@ -41,6 +42,60 @@ function makeWholeDocumentReplacement(
     },
   ]
 }
+
+describe('ReviewStateManager state file watching', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  test('does not rewrite the state after a delayed watcher event from its own save', async () => {
+    const workspaceFolder: vscode.WorkspaceFolder = {
+      uri: vscode.Uri.file('/tmp/review-helper-workspace'),
+      name: 'review-helper-workspace',
+      index: 0,
+    }
+    let diskContents = JSON.stringify({
+      version: 3,
+      branches: {
+        main: {
+          files: {},
+          lastAccessedAt: 1,
+        },
+      },
+    })
+
+    vi.spyOn(vscode.workspace, 'workspaceFolders', 'get').mockReturnValue([
+      workspaceFolder,
+    ])
+    vi.spyOn(vscode.workspace.fs, 'readFile').mockImplementation(() => (
+      Promise.resolve(new TextEncoder().encode(diskContents))
+    ))
+    const writeFile = vi.spyOn(vscode.workspace.fs, 'writeFile')
+      .mockImplementation((_uri, data) => {
+        diskContents = new TextDecoder().decode(data)
+        return Promise.resolve()
+      })
+
+    const manager = new ReviewStateManager()
+    await manager.load(workspaceFolder, 'main')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(writeFile).toHaveBeenCalledOnce()
+
+    // Reproduce a watcher notification arriving after the old timing-based
+    // self-write suppression window had elapsed.
+    await vi.advanceTimersByTimeAsync(101)
+    await manager.reloadFromDisk()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(writeFile).toHaveBeenCalledOnce()
+    manager.dispose()
+  })
+})
 
 describe('ReviewStateManager.handleDocumentChange', () => {
   test('keeps reviewed lines shifted by a pure line insertion before the range', () => {

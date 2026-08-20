@@ -51,6 +51,7 @@ export class ReviewStateManager {
   private currentBranch: string = DEFAULT_BRANCH_KEY
   private saveTimeout: ReturnType<typeof setTimeout> | undefined
   private isSaving = false
+  private lastKnownDiskContents: string | null | undefined
   private readonly _onDidChange = new vscode.EventEmitter<void>()
   readonly onDidChange = this._onDidChange.event
   private undoStack: UndoEntry[] = []
@@ -64,7 +65,9 @@ export class ReviewStateManager {
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, REVIEW_STATE_FILE)
     try {
       const data = await vscode.workspace.fs.readFile(uri)
-      this.state = deserializeState(new TextDecoder().decode(data), currentBranch)
+      const contents = new TextDecoder().decode(data)
+      this.lastKnownDiskContents = contents
+      this.state = deserializeState(contents, currentBranch)
       const branchCount = Object.keys(this.state.branches).length
       const scope = this.state.branches[currentBranch]
       const fileCount = scope ? Object.keys(scope.files).length : 0
@@ -72,6 +75,7 @@ export class ReviewStateManager {
         `State loaded: branch "${currentBranch}" with ${fileCount} tracked file(s); ${branchCount} branch scope(s) total`,
       )
     } catch {
+      this.lastKnownDiskContents = null
       this.state = createDefaultState()
       logInfo('No existing state file found, starting fresh')
     }
@@ -125,10 +129,12 @@ export class ReviewStateManager {
     if (!folder) return
 
     const uri = vscode.Uri.joinPath(folder.uri, REVIEW_STATE_FILE)
-    const data = new TextEncoder().encode(serializeState(this.state))
+    const contents = serializeState(this.state)
+    const data = new TextEncoder().encode(contents)
     this.isSaving = true
     try {
       await vscode.workspace.fs.writeFile(uri, data)
+      this.lastKnownDiskContents = contents
       logDebug('State saved to disk')
     } catch (err) {
       logError(`Failed to save state: ${err instanceof Error ? err.message : String(err)}`)
@@ -148,6 +154,21 @@ export class ReviewStateManager {
 
     const folder = this.getWorkspaceFolder()
     if (!folder) return
+
+    const uri = vscode.Uri.joinPath(folder.uri, REVIEW_STATE_FILE)
+    try {
+      const data = await vscode.workspace.fs.readFile(uri)
+      const contents = new TextDecoder().decode(data)
+      if (contents === this.lastKnownDiskContents) {
+        logDebug('Skipping reload (state file contents unchanged)')
+        return
+      }
+    } catch {
+      if (this.lastKnownDiskContents === null) {
+        logDebug('Skipping reload (state file still missing)')
+        return
+      }
+    }
 
     logInfo('Reloading state from disk (external change detected)')
     await this.load(folder, this.currentBranch)
