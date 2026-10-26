@@ -157,24 +157,52 @@
       "explorer/context": [
         {
           "command": "reviewHelper.addFile",
-          "when": "resourceScheme == file",
-          "group": "reviewHelper"
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "reviewHelper@1"
+        },
+        {
+          "command": "reviewHelper.addUncommittedChanges",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "reviewHelper@2"
+        },
+        {
+          "command": "reviewHelper.addPRChanges",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "reviewHelper@3"
         }
       ],
       "editor/context": [
         {
           "command": "reviewHelper.addFile",
           "when": "!reviewHelper.activeFileTracked",
-          "group": "reviewHelper"
+          "group": "reviewHelper@1"
+        },
+        {
+          "command": "reviewHelper.addUncommittedChanges",
+          "group": "reviewHelper@2"
+        },
+        {
+          "command": "reviewHelper.addPRChanges",
+          "group": "reviewHelper@3"
         },
         {
           "command": "reviewHelper.markReviewed",
           "when": "reviewHelper.activeFileTracked",
-          "group": "reviewHelper"
+          "group": "reviewHelper@4"
         },
         {
           "command": "reviewHelper.markUnreviewed",
-          "group": "reviewHelper"
+          "group": "reviewHelper@5"
+        },
+        {
+          "command": "reviewHelper.markFileReviewed",
+          "when": "reviewHelper.activeFileTracked",
+          "group": "reviewHelper@6"
+        },
+        {
+          "command": "reviewHelper.removeFile",
+          "when": "reviewHelper.activeFileTracked",
+          "group": "reviewHelper@7"
         }
       ],
       "view/title": [
